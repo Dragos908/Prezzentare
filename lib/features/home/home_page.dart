@@ -4,6 +4,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:web/web.dart' as web;
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
@@ -46,7 +47,13 @@ class HomePage extends StatelessWidget {
                   label:       'DISPLAY',
                   description: 'Ecranul prezentării\npentru tablă / proiector',
                   color:       const Color(0xFF00D9A3),
-                  onTap:       () => context.go('/display'),
+                  onTap:       () {
+                    // Intră în fullscreen înainte de a naviga la /display
+                    try {
+                      web.document.documentElement?.requestFullscreen();
+                    } catch (_) {}
+                    context.go('/display');
+                  },
                 ),
                 const SizedBox(width: 24),
                 _ModeCard(
