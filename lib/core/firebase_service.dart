@@ -9,18 +9,22 @@ class FirebaseService {
   static final FirebaseService instance = FirebaseService._();
 
   final _db = FirebaseDatabase.instance;
-  late final DatabaseReference _ref;
+  late DatabaseReference _ref;
 
   bool _initialized = false;
+  String _currentProject = 'proiect1';
+
+  /// Proiectul curent activ.
+  String get currentProject => _currentProject;
 
   /// Starea pre-încărcată sincron înainte de runApp.
-  /// DisplayPage o citește direct — fără niciun frame de așteptare.
   PresentationState? cachedState;
 
-  /// Acum async: fetch complet înainte de a returna.
-  Future<void> init([String project = 'prez']) async {
+  /// Init inițial — apelat din main.dart.
+  Future<void> init([String project = 'proiect1']) async {
     if (_initialized) return;
     _initialized = true;
+    _currentProject = project;
     _ref = _db.ref(project);
 
     if (!kIsWeb) {
@@ -28,8 +32,21 @@ class FirebaseService {
       _ref.keepSynced(true);
     }
 
-    // Pre-încarcă starea: main.dart așteaptă acest Future înainte de runApp
     cachedState = await fetchCurrentState();
+  }
+
+  /// Schimbă proiectul activ — apelat din panoul master de control.
+  /// Returnează starea pre-încărcată a noului proiect.
+  Future<PresentationState?> switchProject(String project) async {
+    _currentProject = project;
+    _ref = _db.ref(project);
+
+    if (!kIsWeb) {
+      _ref.keepSynced(true);
+    }
+
+    cachedState = await fetchCurrentState();
+    return cachedState;
   }
 
   // ── Type-safe helpers ─────────────────────────────────────────────────────
@@ -213,7 +230,7 @@ class FirebaseService {
   Future<void> clearPointer() =>
       _ref.child('pointer').update({'active': false});
 
-  // ── Pointer click (mod CLICK — trimite un click real pe display) ──────────
+  // ── Pointer click ─────────────────────────────────────────────────────────
 
   Stream<Map<String, dynamic>> get pointerClickStream =>
       _ref.child('pointerClick').onValue.map((e) {
