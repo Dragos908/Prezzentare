@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <base href="$FLUTTER_BASE_HREF">
+
+    <meta charset="UTF-8">
+    <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-title" content="Prezentare Interactivă">
+
+    <link rel="icon" type="image/png" href="favicon.png"/>
+    <link rel="apple-touch-icon" href="icons/Icon-192.png">
+    <link rel="manifest" href="manifest.json">
+
+    <title>Prezentare Interactivă</title>
+
+    <link rel="preconnect" href="https://firebaseio.com">
+    <link rel="preconnect" href="https://www.gstatic.com">
+
+    <!-- WebGL 1 pentru table vechi — setat ÎNAINTE de flutter.js -->
+    <script>
+        window.canvasKitConfig = {
+            useWasm: true,
+            enableWebGL2: false
+        };
+    </script>
+
+    <style>
+        * { box-sizing: border-box; }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            background: #0a0a0a;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        #loading {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: #0a0a0a;
+            color: rgba(255, 255, 255, 0.3);
+            font-family: monospace;
+            font-size: 12px;
+            letter-spacing: 4px;
+            z-index: 9999;
+            transition: opacity 0.4s ease;
+        }
+
+        #loading.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .dots {
+            display: flex;
+            gap: 7px;
+            margin-top: 18px;
+        }
+
+        .dots span {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: rgba(108, 99, 255, 0.7);
+            animation: dp 1.2s ease-in-out infinite;
+        }
+
+        .dots span:nth-child(2) { animation-delay: 0.2s; }
+        .dots span:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes dp {
+            0%, 80%, 100% { transform: scale(0.5); opacity: 0.2; }
+            40%            { transform: scale(1.0); opacity: 1.0; }
+        }
+    </style>
+
+    <script>
+        var serviceWorkerVersion = null;
+    </script>
+
+    <!-- Același flutter.js ca în proiectul tău care funcționează -->
+    <script src="flutter.js" defer></script>
+</head>
+<body>
+
+<div id="loading">
+    SE ÎNCARCĂ
+    <div class="dots">
+        <span></span><span></span><span></span>
+    </div>
+</div>
+
+<script>
+    window.addEventListener('load', function (ev) {
+        var loading = document.getElementById('loading');
+
+        // Aceeași structură loadEntrypoint din proiectul tău care mergea
+        _flutter.loader.loadEntrypoint({
+            serviceWorker: {
+                serviceWorkerVersion: serviceWorkerVersion,
+            },
+            onEntrypointLoaded: function (engineInitializer) {
+                engineInitializer.initializeEngine({
+                    renderer: "canvaskit"
+                }).then(function (appRunner) {
+
+                    // Fade out loading screen
+                    loading.classList.add('hidden');
+                    setTimeout(function () {
+                        loading.style.display = 'none';
+                    }, 450);
+
+                    appRunner.runApp();
+                });
+            }
+        });
+    });
+</script>
+
+</body>
+</html>
