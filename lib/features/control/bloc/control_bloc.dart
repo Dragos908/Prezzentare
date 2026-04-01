@@ -1,4 +1,14 @@
 // lib/features/control/bloc/control_bloc.dart
+//
+// FIX 1: starea inițială folosește `_fb.cachedState` în loc de `const PresentationState()`
+//         → UI-ul nu mai apare gol la prima deschidere a panoului de control.
+//
+// FIX 2: ControlBloc nu mai ține referință la instanța veche a `_ref` din
+//         FirebaseService — stream-urile sunt create la momentul abonării,
+//         deci sunt întotdeauna pentru proiectul curent setat în switchProject().
+//
+// FIX 3: Adăugat `broadcastMode` în state (expus via getter) pentru a afișa
+//         un indicator vizual în ControlPage când comenzile merg la toate proiectele.
 
 import 'dart:async';
 import 'package:flutter/foundation.dart' show debugPrint;
@@ -8,7 +18,7 @@ import '../../../core/model.dart';
 import 'control_event.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Evenimente INTERNE (private la acest fișier).
+// Evenimente INTERNE (private la acest fișier)
 // ─────────────────────────────────────────────────────────────────────────────
 class _SlideIndexUpdated extends ControlEvent {
   final int idx;
@@ -84,8 +94,14 @@ class ControlBloc extends Bloc<ControlEvent, PresentationState> {
   late final StreamSubscription<bool>                     _overlaySub;
   late final StreamSubscription<Map<String, dynamic>>     _pointerSub;
 
-  ControlBloc(this._fb) : super(const PresentationState()) {
-    // ── Handlers interni (Firebase → state) ──
+  /// True când FirebaseService este în modul broadcast (toate proiectele).
+  bool get broadcastMode => _fb.broadcastMode;
+
+  // FIX 1: Starea inițială din cachedState — UI-ul nu mai e gol la start.
+  ControlBloc(this._fb)
+      : super(_fb.cachedState ?? const PresentationState()) {
+
+    // ── Handlers interni (Firebase → state) ──────────────────────────────────
     on<_SlideIndexUpdated>((e, emit) =>
         emit(state.copyWith(currentSlide: e.idx)));
 
@@ -119,7 +135,7 @@ class ControlBloc extends Bloc<ControlEvent, PresentationState> {
     on<_PointerUpdated>((e, emit) =>
         emit(state.copyWith(pointerX: e.x, pointerY: e.y, pointerActive: e.active)));
 
-    // ── Handlers publici (comenzi din UI) ──
+    // ── Handlers publici (comenzi din UI) ────────────────────────────────────
     on<NavigateEvent>(_onNavigate);
     on<NavigateRelativeEvent>(_onNavigateRelative);
     on<GoToFirstEvent>(_onGoToFirst);
@@ -134,7 +150,11 @@ class ControlBloc extends Bloc<ControlEvent, PresentationState> {
     on<ClearPointerEvent>(_onClearPointer);
     on<SetPointerClickEvent>(_onSetPointerClick);
 
-    // ── Stream subscriptions Firebase ──
+    // ── Stream subscriptions Firebase ────────────────────────────────────────
+    // Nota: stream-urile sunt create din _fb.xyzStream în momentul apelului,
+    // deci capturează _ref-ul CURENT din FirebaseService la momentul construcției
+    // bloc-ului. Aceasta e corect: switchProject() trebuie apelat ÎNAINTE de
+    // a crea un ControlBloc nou — vezi ProjectSelectorPage._selectProject().
     _indexSub = _fb.currentSlideStream
         .listen((i) => add(_SlideIndexUpdated(i)));
 
@@ -177,7 +197,7 @@ class ControlBloc extends Bloc<ControlEvent, PresentationState> {
 
   Future<void> _onNavigate(
       NavigateEvent e, Emitter<PresentationState> emit) async {
-    debugPrint('[Bloc] NavigateEvent idx=${e.idx}');
+    debugPrint('[Bloc] NavigateEvent idx=${e.idx} broadcast=$broadcastMode');
     if (state.slides.isEmpty) return;
     final idx = e.idx.clamp(0, state.slides.length - 1);
     await _fb.setCurrentSlide(idx, state.currentSlide);
@@ -248,8 +268,6 @@ class ControlBloc extends Bloc<ControlEvent, PresentationState> {
     await _fb.setIframePageIndex(0);
   }
 
-  /// Comutare overlay navigare iframe (activ ↔ dezactivat).
-  /// Când dezactivat: iframe devine complet interactiv (ex: video).
   Future<void> _onToggleOverlay(
       ToggleOverlayEvent e, Emitter<PresentationState> emit) async {
     await _fb.setOverlayEnabled(!state.overlayEnabled);
@@ -267,7 +285,6 @@ class ControlBloc extends Bloc<ControlEvent, PresentationState> {
     await _fb.clearPointer();
   }
 
-  /// Mod CLICK: trimite coordonatele la display pentru a simula un click DOM real.
   Future<void> _onSetPointerClick(
       SetPointerClickEvent e, Emitter<PresentationState> emit) async {
     await _fb.setPointerClick(e.x, e.y);

@@ -6,18 +6,22 @@
 //  Home                   — primul slide
 //  End                    — ultimul slide
 //  T                      — toggle Touch
-//  O                      — toggle Overlay navigare iframe  ← NOU
+//  O                      — toggle Overlay navigare iframe
 //  P / Enter              — Play/Pause cronometru
 //  R                      — Reset cronometru
 //  Shift + →              — pagina următoare în iframe (Canva / Google Slides)
 //  Shift + ←              — pagina anterioară în iframe
 //  Shift + Home           — prima pagină în iframe (reset)
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// FIX: adăugat parametrul `isBroadcast` + badge vizual în AppBar când
+//       toate proiectele sunt controlate simultan.
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../core/model.dart';
+import '../../core/firebase_service.dart';
 import 'bloc/control_bloc.dart';
 import 'bloc/control_event.dart';
 import 'widgets/slide_panels.dart';
@@ -25,11 +29,14 @@ import 'widgets/navigation_panel.dart';
 import 'widgets/control_widgets.dart';
 
 class ControlPage extends StatelessWidget {
-  const ControlPage({super.key});
+  /// True → comenzile merg la TOATE proiectele (broadcast mode).
+  final bool isBroadcast;
+
+  const ControlPage({this.isBroadcast = false, super.key});
 
   @override
   Widget build(BuildContext context) {
-    return const _ControlView();
+    return _ControlView(isBroadcast: isBroadcast);
   }
 }
 
@@ -37,7 +44,8 @@ class ControlPage extends StatelessWidget {
 // _ControlView
 // ─────────────────────────────────────────────────────────────────────────────
 class _ControlView extends StatefulWidget {
-  const _ControlView();
+  final bool isBroadcast;
+  const _ControlView({required this.isBroadcast});
 
   @override
   State<_ControlView> createState() => _ControlViewState();
@@ -71,7 +79,6 @@ class _ControlViewState extends State<_ControlView> {
             .type ==
             SlideType.iframe;
 
-    // ── Navigare iframe cu Shift ──────────────────────────────────────────
     if (isShift) {
       if (key == LogicalKeyboardKey.arrowRight) {
         if (isIframe) bloc.add(IframeNavigateEvent(true));
@@ -87,7 +94,6 @@ class _ControlViewState extends State<_ControlView> {
       }
     }
 
-    // ── Navigare slide-uri ────────────────────────────────────────────────
     if (key == LogicalKeyboardKey.arrowRight ||
         key == LogicalKeyboardKey.space ||
         key == LogicalKeyboardKey.pageDown) {
@@ -101,17 +107,11 @@ class _ControlViewState extends State<_ControlView> {
       if (state.slides.isNotEmpty) {
         bloc.add(NavigateEvent(state.slides.length - 1));
       }
-    }
-    // ── Touch toggle ──────────────────────────────────────────────────────
-    else if (key == LogicalKeyboardKey.keyT) {
+    } else if (key == LogicalKeyboardKey.keyT) {
       bloc.add(ToggleTouchEvent());
-    }
-    // ── Overlay toggle ────────────────────────────────────────────────────
-    else if (key == LogicalKeyboardKey.keyO) {
+    } else if (key == LogicalKeyboardKey.keyO) {
       bloc.add(ToggleOverlayEvent());
-    }
-    // ── Cronometru ────────────────────────────────────────────────────────
-    else if (key == LogicalKeyboardKey.keyP ||
+    } else if (key == LogicalKeyboardKey.keyP ||
         key == LogicalKeyboardKey.enter) {
       bloc.add(TimerToggleEvent());
     } else if (key == LogicalKeyboardKey.keyR) {
@@ -131,9 +131,10 @@ class _ControlViewState extends State<_ControlView> {
           child: Scaffold(
             backgroundColor: const Color(0xFF07070f),
             appBar: _ControlAppBar(
-              state:       state,
-              bloc:        bloc,
-              pointerMode: _pointerMode,
+              state:           state,
+              bloc:            bloc,
+              isBroadcast:     widget.isBroadcast,
+              pointerMode:     _pointerMode,
               onTogglePointer: () {
                 if (_pointerMode) bloc.add(ClearPointerEvent());
                 setState(() => _pointerMode = !_pointerMode);
@@ -144,21 +145,17 @@ class _ControlViewState extends State<_ControlView> {
               children: [
                 Row(
                   children: [
-                    // ── Stânga: Presenter View ──
                     const SizedBox(
                       width: 320,
                       child: SlideMonitorPanel(),
                     ),
-                    // ── Centru: Comenzi ──
-                    Expanded(child: _CenterPanel()),
-                    // ── Dreapta: Listă slide-uri ──
+                    Expanded(child: _CenterPanel(isBroadcast: widget.isBroadcast)),
                     const SizedBox(
                       width: 220,
                       child: SlideListPanel(),
                     ),
                   ],
                 ),
-                // ── Ecran Pointer Laser (overlay fullscreen) ──
                 if (_pointerMode)
                   _PointerScreen(
                     bloc:   bloc,
@@ -182,12 +179,14 @@ class _ControlViewState extends State<_ControlView> {
 class _ControlAppBar extends StatelessWidget implements PreferredSizeWidget {
   final PresentationState state;
   final ControlBloc       bloc;
-  final bool             pointerMode;
-  final VoidCallback     onTogglePointer;
+  final bool              isBroadcast;
+  final bool              pointerMode;
+  final VoidCallback      onTogglePointer;
 
   const _ControlAppBar({
     required this.state,
     required this.bloc,
+    required this.isBroadcast,
     required this.pointerMode,
     required this.onTogglePointer,
   });
@@ -203,23 +202,58 @@ class _ControlAppBar extends StatelessWidget implements PreferredSizeWidget {
             SlideType.iframe;
 
     return AppBar(
-      backgroundColor: const Color(0xFF0b0b16),
+      backgroundColor: isBroadcast
+          ? const Color(0xFF1a1200)   // fundal galben-închis în broadcast mode
+          : const Color(0xFF0b0b16),
       elevation: 0,
       titleSpacing: 0,
       title: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20),
         child: Row(
           children: [
-            const Text(
-              'CONTROL',
-              style: TextStyle(
-                color:         Colors.white,
-                fontSize:      13,
-                fontWeight:    FontWeight.w800,
-                letterSpacing: 4,
+            // ── Badge BROADCAST (vizibil când controlăm toate proiectele) ──
+            if (isBroadcast) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color:        const Color(0xFFFFBE21).withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: const Color(0xFFFFBE21).withOpacity(0.6)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.broadcast_on_personal,
+                      size: 12, color: Color(0xFFFFBE21),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'BROADCAST — ${FirebaseService.kAllProjects.length} PROIECTE',
+                      style: const TextStyle(
+                        color:         Color(0xFFFFBE21),
+                        fontSize:      10,
+                        fontWeight:    FontWeight.w800,
+                        letterSpacing: 1.5,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(width: 20),
+              const SizedBox(width: 16),
+            ] else ...[
+              Text(
+                'CONTROL — ${FirebaseService.instance.currentProject.toUpperCase()}',
+                style: const TextStyle(
+                  color:         Colors.white,
+                  fontSize:      13,
+                  fontWeight:    FontWeight.w800,
+                  letterSpacing: 4,
+                ),
+              ),
+              const SizedBox(width: 20),
+            ],
+
             _ShortcutBadge('← →', 'slide'),
             const SizedBox(width: 8),
             _ShortcutBadge('T', 'touch'),
@@ -234,6 +268,7 @@ class _ControlAppBar extends StatelessWidget implements PreferredSizeWidget {
               _ShortcutBadge('⇧ ← →', 'iframe'),
             ],
             const Spacer(),
+
             // ── Buton Pointer Laser ──────────────────────────────────────
             GestureDetector(
               onTap: onTogglePointer,
@@ -336,7 +371,11 @@ class _ControlAppBar extends StatelessWidget implements PreferredSizeWidget {
       bottom: PreferredSize(
         preferredSize: const Size.fromHeight(1),
         child: Container(
-            height: 1, color: Colors.white.withOpacity(0.06)),
+          height: 1,
+          color: isBroadcast
+              ? const Color(0xFFFFBE21).withOpacity(0.25)
+              : Colors.white.withOpacity(0.06),
+        ),
       ),
     );
   }
@@ -364,7 +403,7 @@ class _IframePageBadge extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
             decoration: BoxDecoration(
-              color:        pageIndex > 0
+              color: pageIndex > 0
                   ? color.withOpacity(0.1)
                   : Colors.transparent,
               borderRadius: const BorderRadius.horizontal(
@@ -542,6 +581,9 @@ class _PulseDotState extends State<_PulseDot>
 // Panoul central
 // ─────────────────────────────────────────────────────────────────────────────
 class _CenterPanel extends StatelessWidget {
+  final bool isBroadcast;
+  const _CenterPanel({required this.isBroadcast});
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -554,8 +596,10 @@ class _CenterPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // ── Banner broadcast (dacă e activ) ─────────────────────────────
+          if (isBroadcast)
+            _BroadcastBanner(),
 
-          // ══ NAVIGARE ═══════════════════════════════════════════════════════
           Expanded(
             flex: 5,
             child: Column(
@@ -570,7 +614,6 @@ class _CenterPanel extends StatelessWidget {
 
           _Separator(),
 
-          // ══ CRONOMETRE + TABLĂ ════════════════════════════════════════════
           Expanded(
             flex: 3,
             child: SingleChildScrollView(
@@ -583,7 +626,6 @@ class _CenterPanel extends StatelessWidget {
 
                   _Separator(),
 
-                  // ── Tablă interactivă + Overlay ──
                   Padding(
                     padding: const EdgeInsets.fromLTRB(20, 14, 20, 16),
                     child: Column(
@@ -595,7 +637,6 @@ class _CenterPanel extends StatelessWidget {
                         const SizedBox(height: 8),
                         const TouchToggleWidget(),
                         const SizedBox(height: 8),
-                        // ── NOU: Toggle overlay navigare iframe ──────────────
                         const OverlayToggleWidget(),
                         const SizedBox(height: 8),
                         const VolumeControlWidget(),
@@ -603,6 +644,36 @@ class _CenterPanel extends StatelessWidget {
                     ),
                   ),
                 ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Banner vizibil în modul broadcast
+class _BroadcastBanner extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    const color = Color(0xFFFFBE21);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+      color: color.withOpacity(0.07),
+      child: Row(
+        children: [
+          const Icon(Icons.broadcast_on_personal, size: 14, color: color),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'MOD BROADCAST — Comenzile se transmit simultan la TOATE cele '
+                  '${FirebaseService.kAllProjects.length} proiecte. '
+                  'Starea afișată este a proiectului "${FirebaseService.kAllProjects.first}" (referință).',
+              style: TextStyle(
+                color:    color.withOpacity(0.85),
+                fontSize: 10,
+                height:   1.4,
               ),
             ),
           ),
@@ -650,8 +721,6 @@ class _Separator extends StatelessWidget {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Ecran Pointer Laser
-// Overlay fullscreen: profesorul apasă/trage oriunde → dot roșu apare
-// pe Display la coordonatele corespunzătoare (normalizate 0.0–1.0).
 // ─────────────────────────────────────────────────────────────────────────────
 class _PointerScreen extends StatefulWidget {
   final ControlBloc  bloc;
@@ -664,11 +733,11 @@ class _PointerScreen extends StatefulWidget {
 }
 
 class _PointerScreenState extends State<_PointerScreen> {
-  double?   _dotX, _dotY;   // coordonate locale [0,1] pentru dot pe ecranul de control
+  double?   _dotX, _dotY;
   bool      _isDown = false;
   DateTime? _lastSend;
 
-  static const _throttle = Duration(milliseconds: 30); // ~33 fps
+  static const _throttle = Duration(milliseconds: 30);
 
   void _updatePointer(Offset local, BoxConstraints constraints) {
     final nx = (local.dx / constraints.maxWidth).clamp(0.0, 1.0);
@@ -693,12 +762,10 @@ class _PointerScreenState extends State<_PointerScreen> {
     const purple = Color(0xFF6C63FF);
 
     return Container(
-      color: const Color(0xEA07070f), // quasi-opaque pentru a acoperi panoul din spate
+      color: const Color(0xEA07070f),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-
-          // ── Header ──────────────────────────────────────────────────────
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
             decoration: BoxDecoration(
@@ -742,7 +809,6 @@ class _PointerScreenState extends State<_PointerScreen> {
                   ),
                 ),
                 const Spacer(),
-                // Indicator status pointer
                 AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   width:  8, height: 8,
@@ -755,7 +821,6 @@ class _PointerScreenState extends State<_PointerScreen> {
                   ),
                 ),
                 const SizedBox(width: 16),
-                // Buton ieșire
                 GestureDetector(
                   onTap: widget.onExit,
                   child: Container(
@@ -785,7 +850,6 @@ class _PointerScreenState extends State<_PointerScreen> {
             ),
           ),
 
-          // ── Zona de click 16:9 ────────────────────────────────────────
           Expanded(
             child: Container(
               padding: const EdgeInsets.all(24),
@@ -822,13 +886,10 @@ class _PointerScreenState extends State<_PointerScreen> {
                               child: Stack(
                                 fit: StackFit.expand,
                                 children: [
-                                  // ── Grilă de referință ──────────────────
                                   CustomPaint(
                                     painter: _GridPainter(),
                                     child: const SizedBox.expand(),
                                   ),
-
-                                  // ── Indicații când nu se apasă ─────────
                                   if (!_isDown)
                                     Center(
                                       child: Column(
@@ -851,8 +912,6 @@ class _PointerScreenState extends State<_PointerScreen> {
                                         ],
                                       ),
                                     ),
-
-                                  // ── Dot local (preview pe ecranul de control) ──
                                   if (_isDown && _dotX != null && _dotY != null)
                                     Positioned(
                                       left: _dotX! * constraints.maxWidth  - 12,
@@ -888,7 +947,6 @@ class _PointerScreenState extends State<_PointerScreen> {
             ),
           ),
 
-          // ── Footer: instrucțiuni ─────────────────────────────────────
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
             color: Colors.black.withOpacity(0.3),
@@ -922,34 +980,26 @@ class _HintChip extends StatelessWidget {
       children: [
         Icon(icon, size: 12, color: Colors.white24),
         const SizedBox(width: 5),
-        Text(
-          text,
-          style: const TextStyle(color: Colors.white24, fontSize: 10),
-        ),
+        Text(text, style: const TextStyle(color: Colors.white24, fontSize: 10)),
       ],
     );
   }
 }
 
-// ── Grilă ușoară de referință ─────────────────────────────────────────────────
 class _GridPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
       ..color       = Colors.white.withOpacity(0.04)
       ..strokeWidth = 1;
-
-    // Linii verticale
     for (int i = 1; i < 4; i++) {
       final x = size.width * i / 4;
       canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
     }
-    // Linii orizontale
     for (int i = 1; i < 3; i++) {
       final y = size.height * i / 3;
       canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
     }
-    // Centru
     final centerPaint = Paint()
       ..color       = Colors.white.withOpacity(0.08)
       ..strokeWidth = 1;

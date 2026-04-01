@@ -1,8 +1,11 @@
 // lib/features/control/control_gate_page.dart
 //
-// Parolă master hardcodată: "adf145"
+// Parola master hardcodată: "adf145"
 // După autentificare → ecran de selecție proiect (proiect1...proiect11)
-// Click pe proiect → ControlPage pentru acel proiect
+//   + opțiunea "CONTROL ALL" care activează modul broadcast.
+//
+// FIX: ControlBloc-ul anterior este închis (close()) înainte de a crea unul nou,
+//       pentru a preveni memory leaks și scrieri accidentale pe proiectul greșit.
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -17,15 +20,11 @@ import 'control_page.dart';
 const _kMasterPassword = 'adf145';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Lista proiectelor disponibile
+// Lista proiectelor disponibile — sincronizată cu FirebaseService.kAllProjects
 // ─────────────────────────────────────────────────────────────────────────────
-const _kProjects = [
-  'proiect1',  'proiect2',  'proiect3',  'proiect4',
-  'proiect5',  'proiect6',  'proiect7',  'proiect8',
-  'proiect9',  'proiect10', 'proiect11',
-];
+final _kProjects = FirebaseService.kAllProjects;
 
-// Culori per proiect (aceleași ca în Firebase)
+// Culori per proiect
 const _kProjectColors = [
   Color(0xFF6C63FF), // 1 - violet
   Color(0xFF00D9A3), // 2 - verde
@@ -52,8 +51,8 @@ class ControlGatePage extends StatefulWidget {
 
 class _ControlGatePageState extends State<ControlGatePage>
     with SingleTickerProviderStateMixin {
-  final _controller      = TextEditingController();
-  final _focusNode       = FocusNode();
+  final _controller       = TextEditingController();
+  final _focusNode        = FocusNode();
   final _keyListenerFocus = FocusNode();
 
   late AnimationController _shakeCtrl;
@@ -155,7 +154,6 @@ class _ControlGatePageState extends State<ControlGatePage>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Icon
                   AnimatedContainer(
                     duration: const Duration(milliseconds: 300),
                     width: 64, height: 64,
@@ -192,7 +190,6 @@ class _ControlGatePageState extends State<ControlGatePage>
                   ),
                   const SizedBox(height: 28),
 
-                  // Input
                   AnimatedContainer(
                     duration: const Duration(milliseconds: 200),
                     decoration: BoxDecoration(
@@ -235,7 +232,6 @@ class _ControlGatePageState extends State<ControlGatePage>
                   ),
                   const SizedBox(height: 16),
 
-                  // Buton
                   SizedBox(
                     width: double.infinity,
                     child: GestureDetector(
@@ -254,7 +250,7 @@ class _ControlGatePageState extends State<ControlGatePage>
                           borderRadius: BorderRadius.circular(10),
                           border: _hasError
                               ? Border.all(
-                                  color: const Color(0xFFFF6584).withOpacity(0.4))
+                              color: const Color(0xFFFF6584).withOpacity(0.4))
                               : null,
                         ),
                         child: Text(
@@ -281,7 +277,7 @@ class _ControlGatePageState extends State<ControlGatePage>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ProjectSelectorPage — selectează proiectul după login
+// ProjectSelectorPage — selectează proiectul sau activează modul broadcast
 // ─────────────────────────────────────────────────────────────────────────────
 class ProjectSelectorPage extends StatefulWidget {
   const ProjectSelectorPage({super.key});
@@ -291,25 +287,45 @@ class ProjectSelectorPage extends StatefulWidget {
 }
 
 class _ProjectSelectorPageState extends State<ProjectSelectorPage> {
-  String? _loading; // proiectul care se încarcă în momentul ăsta
+  String? _loading;          // proiectul care se încarcă
+  bool    _loadingBroadcast = false;
+
+  // Reținem bloc-ul activ pentru a-l putea disposa corect la switch
+  ControlBloc? _activeBloc;
 
   Future<void> _selectProject(String project) async {
-    if (_loading != null) return;
+    if (_loading != null || _loadingBroadcast) return;
     setState(() => _loading = project);
 
-    // Schimbăm proiectul activ în FirebaseService
     await FirebaseService.instance.switchProject(project);
-
     if (!mounted) return;
 
-    // Creăm un bloc nou pentru proiectul selectat
+    _navigateToControl(isBroadcast: false);
+  }
+
+  Future<void> _selectBroadcast() async {
+    if (_loading != null || _loadingBroadcast) return;
+    setState(() => _loadingBroadcast = true);
+
+    await FirebaseService.instance.activateBroadcast();
+    if (!mounted) return;
+
+    _navigateToControl(isBroadcast: true);
+  }
+
+  void _navigateToControl({required bool isBroadcast}) {
+    // Închide bloc-ul anterior dacă există (previne memory leaks și scrieri
+    // accidentale pe proiectul vechi).
+    _activeBloc?.close();
+
     final bloc = ControlBloc(FirebaseService.instance);
+    _activeBloc = bloc;
 
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
         pageBuilder: (_, __, ___) => BlocProvider.value(
           value: bloc,
-          child: const ControlPage(),
+          child: ControlPage(isBroadcast: isBroadcast),
         ),
         transitionDuration: Duration.zero,
         reverseTransitionDuration: Duration.zero,
@@ -318,7 +334,15 @@ class _ProjectSelectorPageState extends State<ProjectSelectorPage> {
   }
 
   @override
+  void dispose() {
+    // Nu dispose-uim _activeBloc aici — e folosit de ControlPage
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final bool busy = _loading != null || _loadingBroadcast;
+
     return Scaffold(
       backgroundColor: const Color(0xFF06060f),
       body: Column(
@@ -356,7 +380,6 @@ class _ProjectSelectorPageState extends State<ProjectSelectorPage> {
                       ),
                     ),
                     const Spacer(),
-                    // Buton înapoi la login
                     GestureDetector(
                       onTap: () => Navigator.of(context).pushReplacement(
                         PageRouteBuilder(
@@ -412,7 +435,17 @@ class _ProjectSelectorPageState extends State<ProjectSelectorPage> {
             ),
           ),
 
-          // ── Grid proiecte ──
+          // ── Buton CONTROL ALL ──
+          Padding(
+            padding: const EdgeInsets.fromLTRB(32, 24, 32, 0),
+            child: _BroadcastCard(
+              isLoading: _loadingBroadcast,
+              disabled:  busy && !_loadingBroadcast,
+              onTap:     _selectBroadcast,
+            ),
+          ),
+
+          // ── Grid proiecte individuale ──
           Expanded(
             child: Center(
               child: SingleChildScrollView(
@@ -422,8 +455,8 @@ class _ProjectSelectorPageState extends State<ProjectSelectorPage> {
                   runSpacing: 16,
                   alignment: WrapAlignment.center,
                   children: List.generate(_kProjects.length, (i) {
-                    final project = _kProjects[i];
-                    final color   = _kProjectColors[i];
+                    final project   = _kProjects[i];
+                    final color     = _kProjectColors[i];
                     final isLoading = _loading == project;
 
                     return _ProjectCard(
@@ -431,7 +464,7 @@ class _ProjectSelectorPageState extends State<ProjectSelectorPage> {
                       project:   project,
                       color:     color,
                       isLoading: isLoading,
-                      disabled:  _loading != null && !isLoading,
+                      disabled:  busy && !isLoading,
                       onTap:     () => _selectProject(project),
                     );
                   }),
@@ -446,7 +479,139 @@ class _ProjectSelectorPageState extends State<ProjectSelectorPage> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Card pentru un proiect
+// Card BROADCAST — controlează TOATE proiectele simultan
+// ─────────────────────────────────────────────────────────────────────────────
+class _BroadcastCard extends StatefulWidget {
+  final bool isLoading;
+  final bool disabled;
+  final VoidCallback onTap;
+
+  const _BroadcastCard({
+    required this.isLoading,
+    required this.disabled,
+    required this.onTap,
+  });
+
+  @override
+  State<_BroadcastCard> createState() => _BroadcastCardState();
+}
+
+class _BroadcastCardState extends State<_BroadcastCard> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    const color   = Color(0xFFFFBE21);
+    final opacity = widget.disabled ? 0.35 : 1.0;
+
+    return MouseRegion(
+      onEnter: (_) { if (!widget.disabled) setState(() => _hovered = true); },
+      onExit:  (_) => setState(() => _hovered = false),
+      cursor: widget.disabled
+          ? SystemMouseCursors.basic
+          : SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: widget.disabled ? null : widget.onTap,
+        child: AnimatedOpacity(
+          duration: const Duration(milliseconds: 200),
+          opacity: opacity,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
+            decoration: BoxDecoration(
+              color: _hovered || widget.isLoading
+                  ? color.withOpacity(0.10)
+                  : const Color(0xFF0d0d18),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: _hovered || widget.isLoading
+                    ? color.withOpacity(0.6)
+                    : color.withOpacity(0.25),
+                width: 1.5,
+              ),
+              boxShadow: _hovered || widget.isLoading
+                  ? [BoxShadow(
+                color: color.withOpacity(0.12),
+                blurRadius: 24,
+                offset: const Offset(0, 6),
+              )]
+                  : [],
+            ),
+            child: Row(
+              children: [
+                // Iconiță / spinner
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  width: 44, height: 44,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: color.withOpacity(_hovered || widget.isLoading ? 0.2 : 0.1),
+                  ),
+                  child: widget.isLoading
+                      ? Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: CircularProgressIndicator(
+                      color: color, strokeWidth: 2,
+                    ),
+                  )
+                      : const Icon(Icons.broadcast_on_personal, color: color, size: 22),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'CONTROL ALL — TOATE PROIECTELE',
+                        style: TextStyle(
+                          color: _hovered || widget.isLoading ? Colors.white : Colors.white70,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 2,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        'Comenzile se transmit simultan la toate cele ${FirebaseService.kAllProjects.length} proiecte',
+                        style: TextStyle(
+                          color: color.withOpacity(0.6),
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                // Badge
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color:        color.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: color.withOpacity(0.4)),
+                  ),
+                  child: const Text(
+                    'BROADCAST',
+                    style: TextStyle(
+                      color:         color,
+                      fontSize:      9,
+                      fontWeight:    FontWeight.w800,
+                      letterSpacing: 1.5,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Card pentru un proiect individual
 // ─────────────────────────────────────────────────────────────────────────────
 class _ProjectCard extends StatefulWidget {
   final int    number;
@@ -505,16 +670,15 @@ class _ProjectCardState extends State<_ProjectCard> {
               ),
               boxShadow: _hovered || widget.isLoading
                   ? [BoxShadow(
-                      color: widget.color.withOpacity(0.15),
-                      blurRadius: 24,
-                      offset: const Offset(0, 6),
-                    )]
+                color: widget.color.withOpacity(0.15),
+                blurRadius: 24,
+                offset: const Offset(0, 6),
+              )]
                   : [],
             ),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // Icon sau spinner
                 AnimatedContainer(
                   duration: const Duration(milliseconds: 180),
                   width: 48, height: 48,
@@ -525,21 +689,17 @@ class _ProjectCardState extends State<_ProjectCard> {
                   ),
                   child: widget.isLoading
                       ? Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: CircularProgressIndicator(
-                            color: widget.color,
-                            strokeWidth: 2,
-                          ),
-                        )
+                    padding: const EdgeInsets.all(12),
+                    child: CircularProgressIndicator(
+                      color: widget.color, strokeWidth: 2,
+                    ),
+                  )
                       : Icon(
-                          Icons.slideshow_outlined,
-                          color: widget.color,
-                          size: 22,
-                        ),
+                    Icons.slideshow_outlined,
+                    color: widget.color, size: 22,
+                  ),
                 ),
                 const SizedBox(height: 14),
-
-                // Număr
                 Text(
                   'PROIECT',
                   style: TextStyle(
