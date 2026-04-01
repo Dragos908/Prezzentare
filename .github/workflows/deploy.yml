@@ -25,8 +25,8 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Build Web cu CanvasKit
-        run: flutter build web --web-renderer canvaskit --release --base-href "/Prezzentare/"
+      - name: Build Web
+        run: flutter build web --release --base-href "/Prezzentare/"
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
