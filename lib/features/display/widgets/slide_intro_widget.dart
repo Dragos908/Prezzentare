@@ -1,19 +1,39 @@
-import 'dart:js_interop'; // <--- IMPORT NOU
+import 'dart:js_interop';
 import 'dart:ui_web' as ui;
 import 'package:web/web.dart' as web;
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
-import '../../../core/model.dart';
+import '../../../core/model.dart'; // Verifică dacă calea este corectă
 
-// ... restul codului tău (extragere ID, etc.) rămâne neschimbat până la initState ...
+// 1. Declarăm Widget-ul principal
+class SlideIntroWidget extends StatefulWidget {
+  final Slide slide; // Presupun că obiectul tău se numește 'Slide'
+
+  const SlideIntroWidget({super.key, required this.slide});
+
+  @override
+  State<SlideIntroWidget> createState() => _SlideIntroWidgetState();
+}
+
+// 2. Declarăm clasa de Stare (State)
+class _SlideIntroWidgetState extends State<SlideIntroWidget> {
+  // 3. Declarăm variabilele necesare
+  static int _idCounter = 0;
+  String? _viewId;
+  String? _videoId;
 
   @override
   void initState() {
     super.initState();
+
+    // 🔴 AICI: Adaugă logica ta de extragere a ID-ului YouTube din widget.slide
+    // Exemplu: _videoId = extrageVideoId(widget.slide.url);
+    // _videoId = ... 
+
     final vid = _videoId;
     if (vid != null) {
       _viewId = 'intro-yt-${_idCounter++}';
-      
+
       final htmlContent = '''
       <!DOCTYPE html>
       <html>
@@ -57,19 +77,18 @@ import '../../../core/model.dart';
 
       ui.platformViewRegistry.registerViewFactory(_viewId!, (_) {
         final el = web.HTMLIFrameElement()
-          ..srcdoc              = htmlContent.toJS // <--- REPARAT AICI (.toJS)
+          ..srcdoc              = htmlContent.toJS
           ..style.border        = 'none'
           ..style.width         = '100%'
           ..style.height        = '100%'
           ..style.pointerEvents = 'none'
           ..allowFullscreen     = true;
-        
+
         el.setAttribute('allow', 'autoplay; fullscreen; encrypted-media; picture-in-picture');
         return el;
       });
     }
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -78,21 +97,18 @@ import '../../../core/model.dart';
       return Stack(
         fit: StackFit.expand,
         children: [
-          // Renderizarea IFrame-ului creat în initState
           HtmlElementView(viewType: _viewId!),
 
-          // Vignette subtil pe margini (păstrat din designul tău)
           Container(
             decoration: const BoxDecoration(
               gradient: RadialGradient(
                 center: Alignment.center,
                 radius: 1.25,
-                colors: [Colors.transparent, Color(0x66000000)], // Ușor mai întunecat pentru contrast text
+                colors: [Colors.transparent, Color(0x66000000)], 
               ),
             ),
           ),
 
-          // Subtitle opțional suprapus
           if (widget.slide.subtitle != null)
             Positioned(
               bottom: 52, left: 0, right: 0,
@@ -151,7 +167,6 @@ import '../../../core/model.dart';
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: hexToColor(e.value).withOpacity(0.22),
-                  // Am adăugat un blur pentru a face orb-urile mai organice
                   boxShadow: [
                     BoxShadow(
                       color: hexToColor(e.value).withOpacity(0.1),
@@ -212,7 +227,7 @@ import '../../../core/model.dart';
   }
 }
 
-// O funcție helper presupusă că o ai undeva în proiect
+// Funcție ajutătoare în afara claselor
 Color hexToColor(String hexString) {
   final buffer = StringBuffer();
   if (hexString.length == 6 || hexString.length == 7) buffer.write('ff');
