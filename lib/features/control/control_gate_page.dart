@@ -48,7 +48,7 @@ class _ControlGatePageState extends State<ControlGatePage>
     ]).animate(CurvedAnimation(parent: _shakeCtrl, curve: Curves.easeInOut));
 
     WidgetsBinding.instance.addPostFrameCallback(
-        (_) => _focusNode.requestFocus());
+            (_) => _focusNode.requestFocus());
   }
 
   @override
@@ -240,7 +240,7 @@ class _ControlGatePageState extends State<ControlGatePage>
                           borderRadius: BorderRadius.circular(10),
                           border: _hasError
                               ? Border.all(
-                                  color: const Color(0xFFFF6584).withOpacity(0.4))
+                              color: const Color(0xFFFF6584).withOpacity(0.4))
                               : null,
                         ),
                         child: Text(
