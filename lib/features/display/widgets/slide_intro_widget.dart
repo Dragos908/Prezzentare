@@ -8,7 +8,7 @@ import 'package:prezentare_interactiva/core/model.dart';
 
 // 1. Declarăm Widget-ul principal
 class SlideIntroWidget extends StatefulWidget {
-  final Slide slide; // Presupun că obiectul tău se numește 'Slide'
+  final SlideModel slide; // Presupun că obiectul tău se numește 'Slide'
 
   const SlideIntroWidget({super.key, required this.slide});
 
