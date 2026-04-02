@@ -29,7 +29,7 @@ class _SlideIntroWidgetState extends State<SlideIntroWidget> {
 
     // 🔴 Am setat ID-ul videoclipului extras din linkul tău:
     // https://youtu.be/8geijnkhe4Y?si=vPGSzVi93eCvaBQm
-    _videoId = '8geijnkhe4Y'; 
+    _videoId = '8geijnkhe4Y';
 
     final vid = _videoId;
     if (vid != null) {
@@ -105,7 +105,7 @@ class _SlideIntroWidgetState extends State<SlideIntroWidget> {
               gradient: RadialGradient(
                 center: Alignment.center,
                 radius: 1.25,
-                colors: [Colors.transparent, Color(0x66000000)], 
+                colors: [Colors.transparent, Color(0x66000000)],
               ),
             ),
           ),
@@ -166,15 +166,15 @@ class _SlideIntroWidgetState extends State<SlideIntroWidget> {
                 width:  sizes[idx],
                 height: sizes[idx],
                 decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: hexToColor(e.value).withOpacity(0.22),
-                  boxShadow: [
-                    BoxShadow(
-                      color: hexToColor(e.value).withOpacity(0.1),
-                      blurRadius: 100,
-                      spreadRadius: 20,
-                    )
-                  ]
+                    shape: BoxShape.circle,
+                    color: hexToColor(e.value).withOpacity(0.22),
+                    boxShadow: [
+                      BoxShadow(
+                        color: hexToColor(e.value).withOpacity(0.1),
+                        blurRadius: 100,
+                        spreadRadius: 20,
+                      )
+                    ]
                 ),
               )
                   .animate(

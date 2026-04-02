@@ -1,17 +1,18 @@
 // lib/features/control/control_page.dart
 //
 // ── SHORTCUTS TASTATURĂ ──────────────────────────────────────────────────────
-//  → / Space / PageDown   — slide următor
-//  ←  / PageUp            — slide anterior
-//  Home                   — primul slide
+//  → / PageDown           — slide următor  (dacă ești pe iframe: pagina următoare)
+//  ← / PageUp             — slide anterior (dacă ești pe iframe: pagina anterioară)
+//  Space                  — slide următor (întotdeauna)
+//  Home                   — primul slide / prima pagină iframe
 //  End                    — ultimul slide
 //  T                      — toggle Touch
-//  O                      — toggle Overlay navigare iframe  ← NOU
+//  O                      — toggle Overlay navigare iframe
 //  P / Enter              — Play/Pause cronometru
 //  R                      — Reset cronometru
-//  Shift + →              — pagina următoare în iframe (Canva / Google Slides)
-//  Shift + ←              — pagina anterioară în iframe
-//  Shift + Home           — prima pagină în iframe (reset)
+//  Shift + →              — pagina ANTERIOARĂ în iframe (direcție inversă)
+//  Shift + ←              — pagina URMĂTOARE  în iframe (direcție inversă)
+//  A                      — salt rapid la slide-ul de ANUNȚ
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'package:flutter/material.dart';
@@ -64,46 +65,76 @@ class _ControlViewState extends State<_ControlView> {
       KeyEvent event, ControlBloc bloc, PresentationState state) {
     if (event is! KeyDownEvent) return;
 
-    final key     = event.logicalKey;
-    final isShift = HardwareKeyboard.instance.isShiftPressed;
+    final key      = event.logicalKey;
+    final isShift  = HardwareKeyboard.instance.isShiftPressed;
     final isIframe = state.slides.isNotEmpty &&
         state.slides[state.currentSlide.clamp(0, state.slides.length - 1)]
             .type ==
             SlideType.iframe;
 
-    // ── Navigare iframe cu Shift ──────────────────────────────────────────
+    // ── ⇧ + ← →: pagina iframe în direcție INVERSĂ ───────────────────────
     if (isShift) {
       if (key == LogicalKeyboardKey.arrowRight) {
-        if (isIframe) bloc.add(IframeNavigateEvent(true));
-        return;
-      }
-      if (key == LogicalKeyboardKey.arrowLeft) {
+        // invers: → merge la pagina ANTERIOARĂ
         if (isIframe) bloc.add(IframeNavigateEvent(false));
         return;
       }
+      if (key == LogicalKeyboardKey.arrowLeft) {
+        // invers: ← merge la pagina URMĂTOARE
+        if (isIframe) bloc.add(IframeNavigateEvent(true));
+        return;
+      }
+      // Shift + Home / End rămân pentru navigare slide-uri
       if (key == LogicalKeyboardKey.home) {
-        if (isIframe) bloc.add(IframeResetPageEvent());
+        bloc.add(GoToFirstEvent());
+        return;
+      }
+      if (key == LogicalKeyboardKey.end) {
+        if (state.slides.isNotEmpty) {
+          bloc.add(NavigateEvent(state.slides.length - 1));
+        }
         return;
       }
     }
 
-    // ── Navigare slide-uri ────────────────────────────────────────────────
+    // ── ← → / PageDown/Up: slide SAU pagina iframe (dacă ești pe iframe) ─
     if (key == LogicalKeyboardKey.arrowRight ||
-        key == LogicalKeyboardKey.space ||
         key == LogicalKeyboardKey.pageDown) {
-      bloc.add(NavigateRelativeEvent(true));
-    } else if (key == LogicalKeyboardKey.arrowLeft ||
-        key == LogicalKeyboardKey.pageUp) {
-      bloc.add(NavigateRelativeEvent(false));
-    } else if (key == LogicalKeyboardKey.home) {
-      bloc.add(GoToFirstEvent());
-    } else if (key == LogicalKeyboardKey.end) {
-      if (state.slides.isNotEmpty) {
-        bloc.add(NavigateEvent(state.slides.length - 1));
+      if (isIframe) {
+        bloc.add(IframeNavigateEvent(true));
+      } else {
+        bloc.add(NavigateRelativeEvent(true));
       }
+      return;
     }
+    if (key == LogicalKeyboardKey.arrowLeft ||
+        key == LogicalKeyboardKey.pageUp) {
+      if (isIframe) {
+        bloc.add(IframeNavigateEvent(false));
+      } else {
+        bloc.add(NavigateRelativeEvent(false));
+      }
+      return;
+    }
+
+    // ── Home: primul slide sau prima pagină iframe ─────────────────────────
+    if (key == LogicalKeyboardKey.home) {
+      if (isIframe) {
+        bloc.add(IframeResetPageEvent());
+      } else {
+        bloc.add(GoToFirstEvent());
+      }
+      return;
+    }
+
+    // ── Space: slide următor (întotdeauna) ────────────────────────────────
+    if (key == LogicalKeyboardKey.space) {
+      bloc.add(NavigateRelativeEvent(true));
+      return;
+    }
+
     // ── Touch toggle ──────────────────────────────────────────────────────
-    else if (key == LogicalKeyboardKey.keyT) {
+    if (key == LogicalKeyboardKey.keyT) {
       bloc.add(ToggleTouchEvent());
     }
     // ── Overlay toggle ────────────────────────────────────────────────────
@@ -117,6 +148,15 @@ class _ControlViewState extends State<_ControlView> {
     } else if (key == LogicalKeyboardKey.keyR) {
       bloc.add(TimerResetEvent());
     }
+    // ── Salt rapid la ANUNȚ ───────────────────────────────────────────────
+    else if (key == LogicalKeyboardKey.keyA) {
+      _jumpToAnnounce(state, bloc);
+    }
+  }
+
+  void _jumpToAnnounce(PresentationState state, ControlBloc bloc) {
+    final idx = state.slides.indexWhere((s) => s.type == SlideType.announce);
+    if (idx >= 0) bloc.add(NavigateEvent(idx));
   }
 
   @override
@@ -138,6 +178,7 @@ class _ControlViewState extends State<_ControlView> {
                 if (_pointerMode) bloc.add(ClearPointerEvent());
                 setState(() => _pointerMode = !_pointerMode);
               },
+              onAnnounce: () => _jumpToAnnounce(state, bloc),
             ),
             body: Stack(
               fit: StackFit.expand,
@@ -146,14 +187,14 @@ class _ControlViewState extends State<_ControlView> {
                   children: [
                     // ── Stânga: Presenter View ──
                     const SizedBox(
-                      width: 320,
+                      width: 300,
                       child: SlideMonitorPanel(),
                     ),
                     // ── Centru: Comenzi ──
                     Expanded(child: _CenterPanel()),
                     // ── Dreapta: Listă slide-uri ──
                     const SizedBox(
-                      width: 220,
+                      width: 200,
                       child: SlideListPanel(),
                     ),
                   ],
@@ -184,12 +225,14 @@ class _ControlAppBar extends StatelessWidget implements PreferredSizeWidget {
   final ControlBloc       bloc;
   final bool             pointerMode;
   final VoidCallback     onTogglePointer;
+  final VoidCallback     onAnnounce;
 
   const _ControlAppBar({
     required this.state,
     required this.bloc,
     required this.pointerMode,
     required this.onTogglePointer,
+    required this.onAnnounce,
   });
 
   @override
@@ -202,12 +245,21 @@ class _ControlAppBar extends StatelessWidget implements PreferredSizeWidget {
             .type ==
             SlideType.iframe;
 
+    final hasAnnounce =
+    state.slides.any((s) => s.type == SlideType.announce);
+    final isOnAnnounce = state.slides.isNotEmpty &&
+        state.slides[state.currentSlide.clamp(0, state.slides.length - 1)]
+            .type ==
+            SlideType.announce;
+
+    const orange = Color(0xFFFF9800);
+
     return AppBar(
       backgroundColor: const Color(0xFF0b0b16),
       elevation: 0,
       titleSpacing: 0,
       title: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
         child: Row(
           children: [
             const Text(
@@ -219,21 +271,66 @@ class _ControlAppBar extends StatelessWidget implements PreferredSizeWidget {
                 letterSpacing: 4,
               ),
             ),
-            const SizedBox(width: 20),
-            _ShortcutBadge('← →', 'slide'),
-            const SizedBox(width: 8),
+            const SizedBox(width: 16),
+            _ShortcutBadge('← →', isIframe ? 'iframe' : 'slide'),
+            const SizedBox(width: 6),
             _ShortcutBadge('T', 'touch'),
-            const SizedBox(width: 8),
+            const SizedBox(width: 6),
             _ShortcutBadge('O', 'overlay'),
-            const SizedBox(width: 8),
+            const SizedBox(width: 6),
             _ShortcutBadge('P', 'timer'),
-            const SizedBox(width: 8),
+            const SizedBox(width: 6),
             _ShortcutBadge('R', 'reset'),
             if (isIframe) ...[
-              const SizedBox(width: 8),
-              _ShortcutBadge('⇧ ← →', 'iframe'),
+              const SizedBox(width: 6),
+              _ShortcutBadge('⇧ ← →', 'iframe ↩'),
             ],
             const Spacer(),
+
+            // ── Buton ANUNȚ ───────────────────────────────────────────────
+            if (hasAnnounce) ...[
+              GestureDetector(
+                onTap: onAnnounce,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: isOnAnnounce
+                        ? orange.withOpacity(0.20)
+                        : Colors.white.withOpacity(0.04),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: isOnAnnounce
+                          ? orange.withOpacity(0.65)
+                          : Colors.white.withOpacity(0.10),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.campaign_outlined,
+                        size:  13,
+                        color: isOnAnnounce ? orange : Colors.white38,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'ANUNȚ',
+                        style: TextStyle(
+                          color: isOnAnnounce ? orange : Colors.white38,
+                          fontSize:      10,
+                          fontWeight:    FontWeight.w800,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+            ],
+
             // ── Buton Pointer Laser ──────────────────────────────────────
             GestureDetector(
               onTap: onTogglePointer,
@@ -279,14 +376,14 @@ class _ControlAppBar extends StatelessWidget implements PreferredSizeWidget {
                 ),
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
             if (isIframe) ...[
               _IframePageBadge(
                 pageIndex: state.iframePageIndex,
                 onPrev: () => bloc.add(IframeNavigateEvent(false)),
                 onNext: () => bloc.add(IframeNavigateEvent(true)),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
             ],
             GestureDetector(
               onTap: () => bloc.add(TimerToggleEvent()),
@@ -328,7 +425,7 @@ class _ControlAppBar extends StatelessWidget implements PreferredSizeWidget {
                 ),
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
             _StatusDot(label: 'Firebase', active: true),
           ],
         ),
@@ -433,7 +530,7 @@ class _ShortcutBadge extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
           decoration: BoxDecoration(
             color:        Colors.white.withOpacity(0.06),
             borderRadius: BorderRadius.circular(4),
@@ -449,7 +546,7 @@ class _ShortcutBadge extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(width: 4),
+        const SizedBox(width: 3),
         Text(
           label,
           style: TextStyle(
@@ -539,7 +636,8 @@ class _PulseDotState extends State<_PulseDot>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Panoul central
+// Panoul central — layout 2 coloane: Navigare | Comenzi
+// Nicio coloană nu are scroll propriu: totul se încadrează pe ecran.
 // ─────────────────────────────────────────────────────────────────────────────
 class _CenterPanel extends StatelessWidget {
   @override
@@ -551,13 +649,13 @@ class _CenterPanel extends StatelessWidget {
           right: BorderSide(color: Colors.white.withOpacity(0.05)),
         ),
       ),
-      child: Column(
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
 
-          // ══ NAVIGARE ═══════════════════════════════════════════════════════
+          // ══ STÂNGA: Navigare ══════════════════════════════════════════════
           Expanded(
-            flex: 5,
+            flex: 55,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -568,42 +666,36 @@ class _CenterPanel extends StatelessWidget {
             ),
           ),
 
-          _Separator(),
+          // Separator vertical
+          Container(width: 1, color: Colors.white.withOpacity(0.05)),
 
-          // ══ CRONOMETRE + TABLĂ ════════════════════════════════════════════
+          // ══ DREAPTA: Cronometre + Tablă ═══════════════════════════════════
           Expanded(
-            flex: 3,
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _SectionHeader(
-                      icon: Icons.timer_outlined, label: 'CRONOMETRE'),
-                  const TimerPanel(),
-
-                  _Separator(),
-
-                  // ── Tablă interactivă + Overlay ──
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 14, 20, 16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _SectionHeader(
-                            icon: Icons.touch_app_outlined,
-                            label: 'TABLĂ INTERACTIVĂ'),
-                        const SizedBox(height: 8),
-                        const TouchToggleWidget(),
-                        const SizedBox(height: 8),
-                        // ── NOU: Toggle overlay navigare iframe ──────────────
-                        const OverlayToggleWidget(),
-                        const SizedBox(height: 8),
-                        const VolumeControlWidget(),
-                      ],
-                    ),
+            flex: 45,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _SectionHeader(
+                    icon: Icons.timer_outlined, label: 'CRONOMETRE'),
+                const CompactTimerPanel(),
+                Container(height: 1, color: Colors.white.withOpacity(0.04)),
+                _SectionHeader(
+                    icon: Icons.touch_app_outlined,
+                    label: 'TABLĂ INTERACTIVĂ'),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(14, 8, 14, 14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TouchToggleWidget(),
+                      SizedBox(height: 8),
+                      OverlayToggleWidget(),
+                      SizedBox(height: 8),
+                      VolumeControlWidget(),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ],
@@ -620,10 +712,10 @@ class _SectionHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
       child: Row(
         children: [
-          Icon(icon, size: 12, color: Colors.white.withOpacity(0.2)),
+          Icon(icon, size: 11, color: Colors.white.withOpacity(0.2)),
           const SizedBox(width: 6),
           Text(
             label,
@@ -640,18 +732,8 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-class _Separator extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) => Container(
-    height: 1,
-    color:  Colors.white.withOpacity(0.04),
-  );
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Ecran Pointer Laser
-// Overlay fullscreen: profesorul apasă/trage oriunde → dot roșu apare
-// pe Display la coordonatele corespunzătoare (normalizate 0.0–1.0).
 // ─────────────────────────────────────────────────────────────────────────────
 class _PointerScreen extends StatefulWidget {
   final ControlBloc  bloc;
@@ -664,11 +746,11 @@ class _PointerScreen extends StatefulWidget {
 }
 
 class _PointerScreenState extends State<_PointerScreen> {
-  double?   _dotX, _dotY;   // coordonate locale [0,1] pentru dot pe ecranul de control
+  double?   _dotX, _dotY;
   bool      _isDown = false;
   DateTime? _lastSend;
 
-  static const _throttle = Duration(milliseconds: 30); // ~33 fps
+  static const _throttle = Duration(milliseconds: 30);
 
   void _updatePointer(Offset local, BoxConstraints constraints) {
     final nx = (local.dx / constraints.maxWidth).clamp(0.0, 1.0);
@@ -689,77 +771,47 @@ class _PointerScreenState extends State<_PointerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    const red    = Color(0xFFFF2244);
     const purple = Color(0xFF6C63FF);
+    const red    = Color(0xFFFF2244);
 
     return Container(
-      color: const Color(0xEA07070f), // quasi-opaque pentru a acoperi panoul din spate
+      color: const Color(0xFF07070f),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-
-          // ── Header ──────────────────────────────────────────────────────
+          // ── Header ────────────────────────────────────────────────────────
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.4),
-              border: Border(
-                bottom: BorderSide(color: red.withOpacity(0.3)),
-              ),
-            ),
+            color:   Colors.black.withOpacity(0.4),
             child: Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color:        red.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(6),
-                    border:       Border.all(color: red.withOpacity(0.5)),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.spatial_tracking, color: red, size: 14),
-                      SizedBox(width: 6),
-                      Text(
-                        'MOD POINTER',
-                        style: TextStyle(
-                          color: red, fontSize: 11,
-                          fontWeight: FontWeight.w800, letterSpacing: 2,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Text(
-                  _isDown
-                      ? 'Pointer activ pe Display'
-                      : 'Apasă oriunde în zonă pentru a indica pe Display',
-                  style: TextStyle(
-                    color:    _isDown ? red : Colors.white38,
-                    fontSize: 12,
-                  ),
-                ),
-                const Spacer(),
-                // Indicator status pointer
                 AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
-                  width:  8, height: 8,
+                  width:  10,
+                  height: 10,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color:      _isDown ? red : Colors.white12,
+                    color: _isDown ? red : Colors.white24,
                     boxShadow: _isDown
                         ? [BoxShadow(color: red.withOpacity(0.7), blurRadius: 8)]
                         : [],
                   ),
                 ),
-                const SizedBox(width: 16),
-                // Buton ieșire
+                const SizedBox(width: 10),
+                Text(
+                  _isDown ? 'ACTIV — trimite pe Display' : 'LASER POINTER',
+                  style: TextStyle(
+                    color:      _isDown ? Colors.white : Colors.white54,
+                    fontSize:   13,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1,
+                  ),
+                ),
+                const Spacer(),
                 GestureDetector(
                   onTap: widget.onExit,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 7),
                     decoration: BoxDecoration(
                       color:        Colors.white.withOpacity(0.06),
                       borderRadius: BorderRadius.circular(8),
@@ -785,10 +837,10 @@ class _PointerScreenState extends State<_PointerScreen> {
             ),
           ),
 
-          // ── Zona de click 16:9 ────────────────────────────────────────
+          // ── Zona de click 16:9 ────────────────────────────────────────────
           Expanded(
             child: Container(
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.all(20),
               child: Center(
                 child: AspectRatio(
                   aspectRatio: 16 / 9,
@@ -800,7 +852,8 @@ class _PointerScreenState extends State<_PointerScreen> {
                           _updatePointer(e.localPosition, constraints);
                         },
                         onPointerMove: (e) {
-                          if (_isDown) _updatePointer(e.localPosition, constraints);
+                          if (_isDown)
+                            _updatePointer(e.localPosition, constraints);
                         },
                         onPointerUp:     (_) => _releasePointer(),
                         onPointerCancel: (_) => _releasePointer(),
@@ -822,13 +875,10 @@ class _PointerScreenState extends State<_PointerScreen> {
                               child: Stack(
                                 fit: StackFit.expand,
                                 children: [
-                                  // ── Grilă de referință ──────────────────
                                   CustomPaint(
                                     painter: _GridPainter(),
                                     child: const SizedBox.expand(),
                                   ),
-
-                                  // ── Indicații când nu se apasă ─────────
                                   if (!_isDown)
                                     Center(
                                       child: Column(
@@ -844,18 +894,19 @@ class _PointerScreenState extends State<_PointerScreen> {
                                             'Apasă sau trage pentru a indica pe ecranul Display',
                                             textAlign: TextAlign.center,
                                             style: TextStyle(
-                                              color:    Colors.white.withOpacity(0.2),
+                                              color:    Colors.white
+                                                  .withOpacity(0.2),
                                               fontSize: 13,
                                             ),
                                           ),
                                         ],
                                       ),
                                     ),
-
-                                  // ── Dot local (preview pe ecranul de control) ──
-                                  if (_isDown && _dotX != null && _dotY != null)
+                                  if (_isDown &&
+                                      _dotX != null &&
+                                      _dotY != null)
                                     Positioned(
-                                      left: _dotX! * constraints.maxWidth  - 12,
+                                      left: _dotX! * constraints.maxWidth - 12,
                                       top:  _dotY! * constraints.maxHeight - 12,
                                       child: Container(
                                         width:  24,
@@ -888,16 +939,18 @@ class _PointerScreenState extends State<_PointerScreen> {
             ),
           ),
 
-          // ── Footer: instrucțiuni ─────────────────────────────────────
+          // ── Footer ────────────────────────────────────────────────────────
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
             color: Colors.black.withOpacity(0.3),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                _HintChip(icon: Icons.mouse, text: 'Click și trage pentru mișcare continuă'),
+                _HintChip(icon: Icons.mouse,
+                    text: 'Click și trage pentru mișcare continuă'),
                 const SizedBox(width: 24),
-                _HintChip(icon: Icons.touch_app, text: 'Funcționează și cu touch'),
+                _HintChip(icon: Icons.touch_app,
+                    text: 'Funcționează și cu touch'),
                 const SizedBox(width: 24),
                 _HintChip(icon: Icons.visibility_off_outlined,
                     text: 'Laser dispare la eliberare'),
@@ -931,7 +984,6 @@ class _HintChip extends StatelessWidget {
   }
 }
 
-// ── Grilă ușoară de referință ─────────────────────────────────────────────────
 class _GridPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
@@ -939,24 +991,23 @@ class _GridPainter extends CustomPainter {
       ..color       = Colors.white.withOpacity(0.04)
       ..strokeWidth = 1;
 
-    // Linii verticale
     for (int i = 1; i < 4; i++) {
       final x = size.width * i / 4;
       canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
     }
-    // Linii orizontale
     for (int i = 1; i < 3; i++) {
       final y = size.height * i / 3;
       canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
     }
-    // Centru
     final centerPaint = Paint()
       ..color       = Colors.white.withOpacity(0.08)
       ..strokeWidth = 1;
     canvas.drawLine(
-        Offset(size.width / 2, 0), Offset(size.width / 2, size.height), centerPaint);
+        Offset(size.width / 2, 0), Offset(size.width / 2, size.height),
+        centerPaint);
     canvas.drawLine(
-        Offset(0, size.height / 2), Offset(size.width, size.height / 2), centerPaint);
+        Offset(0, size.height / 2), Offset(size.width, size.height / 2),
+        centerPaint);
   }
 
   @override

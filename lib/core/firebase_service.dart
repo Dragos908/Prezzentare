@@ -1,7 +1,14 @@
-// lib/core/firebase/firebase_service.dart
+// lib/core/firebase_service.dart
 //
-// Scrierile (navigate, touch, volume etc.) merg ÎNTOTDEAUNA la toate proiectele.
-// Citirile (stream-uri) citesc din proiectul detectat din URL (?p=proiect1).
+// ── ARHITECTURĂ SIMPLIFICATĂ ──────────────────────────────────────────────────
+// O singură secvență de slide-uri stocată într-un singur nod Firebase:
+//   ID 0  → intro global
+//   ID 1–11 → câte un slide iframe pentru fiecare proiect
+//   ID 12 → end global
+//
+// Toate citirile și scrierile merg la un singur ref (_ref), determinat din
+// parametrul URL ?p= (implicit: 'prezentare').
+// Nodurile _global, multi-project și _writeAll au fost eliminate complet.
 
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -15,20 +22,13 @@ class FirebaseService {
   late DatabaseReference _ref;
 
   bool _initialized = false;
-  String _currentProject = 'proiect1';
-
-  // ── Toate proiectele disponibile ──────────────────────────────────────────
-  static const List<String> _allProjects = [
-    'proiect1', 'proiect2', 'proiect3', 'proiect4',
-    'proiect5', 'proiect6', 'proiect7', 'proiect8',
-    'proiect9', 'proiect10', 'proiect11',
-  ];
+  String _currentProject = 'prezentare';
 
   String get currentProject => _currentProject;
 
   PresentationState? cachedState;
 
-  Future<void> init([String project = 'proiect1']) async {
+  Future<void> init([String project = 'prezentare']) async {
     if (_initialized) return;
     _initialized = true;
     _currentProject = project;
@@ -41,21 +41,6 @@ class FirebaseService {
 
     cachedState = await fetchCurrentState();
   }
-
-  Future<PresentationState?> switchProject(String project) async {
-    _currentProject = project;
-    _ref = _db.ref(project);
-    if (!kIsWeb) _ref.keepSynced(true);
-    cachedState = await fetchCurrentState();
-    return cachedState;
-  }
-
-  // ── Scriere pe TOATE proiectele ───────────────────────────────────────────
-  Future<void> _writeAll(String child, dynamic value) =>
-      Future.wait(_allProjects.map((p) => _db.ref(p).child(child).set(value)));
-
-  Future<void> _updateAll(Map<String, dynamic> values) =>
-      Future.wait(_allProjects.map((p) => _db.ref(p).update(values)));
 
   // ── Type-safe helpers ─────────────────────────────────────────────────────
   static bool _toBool(dynamic val, {bool fallback = false}) {
@@ -92,7 +77,7 @@ class FirebaseService {
     return Map<String, dynamic>.from(val as Map);
   }
 
-  // ── STREAMS (citesc din proiectul curent din URL) ─────────────────────────
+  // ── STREAMS ───────────────────────────────────────────────────────────────
 
   Stream<int> get currentSlideStream =>
       _ref.child('currentSlide').onValue
@@ -146,99 +131,12 @@ class FirebaseService {
       _ref.child('overlayEnabled').onValue
           .map((e) => _toBool(e.snapshot.value, fallback: true));
 
-  // ── WRITE — merg la TOATE proiectele ─────────────────────────────────────
-
-  Future<void> setCurrentSlide(int idx, int prevIdx) async {
-    final now = DateTime.now().millisecondsSinceEpoch;
-    await Future.wait(_allProjects.map((project) async {
-      await _db.ref(project).runTransaction((data) {
-        final map = Map<String, dynamic>.from(data as Map? ?? {});
-        map['currentSlide']    = idx;
-        map['iframePageIndex'] = 0;
-
-        final rawTimers = map['slideTimers'];
-        final Map<String, dynamic> timers;
-        if (rawTimers == null) {
-          timers = {};
-        } else if (rawTimers is List) {
-          timers = {};
-          for (var i = 0; i < rawTimers.length; i++) {
-            if (rawTimers[i] != null) timers[i.toString()] = rawTimers[i];
-          }
-        } else {
-          timers = Map<String, dynamic>.from(rawTimers as Map);
-        }
-
-        final prevTimer = timers[prevIdx.toString()];
-        if (prevTimer != null) {
-          final pt          = Map<String, dynamic>.from(prevTimer as Map);
-          final startTs     = pt['startTs'] as int?;
-          final accumulated = (pt['accumulated'] as int?) ?? 0;
-          if (startTs != null) {
-            pt['accumulated'] = accumulated + (now - startTs);
-            pt['endTs']       = now;
-            pt['startTs']     = null;
-          }
-          timers[prevIdx.toString()] = pt;
-        } else {
-          timers[prevIdx.toString()] = {'endTs': now, 'accumulated': 0};
-        }
-
-        final newTimer = timers[idx.toString()];
-        if (newTimer != null) {
-          final nt = Map<String, dynamic>.from(newTimer as Map);
-          nt['startTs'] = now;
-          nt['endTs']   = null;
-          timers[idx.toString()] = nt;
-        } else {
-          timers[idx.toString()] = {'startTs': now, 'accumulated': 0};
-        }
-
-        map['slideTimers'] = timers;
-        return Transaction.success(map);
-      });
-    }));
-  }
-
-  Future<void> setTouchEnabled(bool val) => _writeAll('touchEnabled', val);
-
-  Future<void> setVolume(double val) =>
-      _writeAll('volume', val.clamp(0.0, 1.0));
-
-  Future<void> setTimerRunning(bool val, {int? base}) async {
-    final updates = <String, dynamic>{'timerRunning': val};
-    if (val) updates['timerStart'] = DateTime.now().millisecondsSinceEpoch;
-    if (base != null) updates['timerBase'] = base;
-    await _updateAll(updates);
-  }
-
-  Future<void> setIframePageIndex(int idx) =>
-      _writeAll('iframePageIndex', idx < 0 ? 0 : idx);
-
-  Future<void> setOverlayEnabled(bool val) =>
-      _writeAll('overlayEnabled', val);
-
-  // ── Pointer laser ─────────────────────────────────────────────────────────
-
   Stream<Map<String, dynamic>> get pointerStream =>
       _ref.child('pointer').onValue.map((e) {
         final val = e.snapshot.value;
         if (val == null) return <String, dynamic>{};
         return Map<String, dynamic>.from(val as Map);
       });
-
-  Future<void> setPointer(double x, double y) =>
-      Future.wait(_allProjects.map((p) => _db.ref(p).child('pointer').set({
-        'x':      x.clamp(0.0, 1.0),
-        'y':      y.clamp(0.0, 1.0),
-        'active': true,
-      })));
-
-  Future<void> clearPointer() =>
-      Future.wait(_allProjects.map(
-              (p) => _db.ref(p).child('pointer').update({'active': false})));
-
-  // ── Pointer click ─────────────────────────────────────────────────────────
 
   Stream<Map<String, dynamic>> get pointerClickStream =>
       _ref.child('pointerClick').onValue.map((e) {
@@ -247,12 +145,93 @@ class FirebaseService {
         return Map<String, dynamic>.from(val as Map);
       });
 
+  // ── WRITE — tot la _ref (un singur proiect) ───────────────────────────────
+
+  Future<void> setCurrentSlide(int idx, int prevIdx) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await _ref.runTransaction((data) {
+      final map = Map<String, dynamic>.from(data as Map? ?? {});
+      map['currentSlide']    = idx;
+      map['iframePageIndex'] = 0;
+
+      final rawTimers = map['slideTimers'];
+      final Map<String, dynamic> timers;
+      if (rawTimers == null) {
+        timers = {};
+      } else if (rawTimers is List) {
+        timers = {};
+        for (var i = 0; i < rawTimers.length; i++) {
+          if (rawTimers[i] != null) timers[i.toString()] = rawTimers[i];
+        }
+      } else {
+        timers = Map<String, dynamic>.from(rawTimers as Map);
+      }
+
+      final prevTimer = timers[prevIdx.toString()];
+      if (prevTimer != null) {
+        final pt          = Map<String, dynamic>.from(prevTimer as Map);
+        final startTs     = pt['startTs'] as int?;
+        final accumulated = (pt['accumulated'] as int?) ?? 0;
+        if (startTs != null) {
+          pt['accumulated'] = accumulated + (now - startTs);
+          pt['endTs']       = now;
+          pt['startTs']     = null;
+        }
+        timers[prevIdx.toString()] = pt;
+      } else {
+        timers[prevIdx.toString()] = {'endTs': now, 'accumulated': 0};
+      }
+
+      final newTimer = timers[idx.toString()];
+      if (newTimer != null) {
+        final nt = Map<String, dynamic>.from(newTimer as Map);
+        nt['startTs'] = now;
+        nt['endTs']   = null;
+        timers[idx.toString()] = nt;
+      } else {
+        timers[idx.toString()] = {'startTs': now, 'accumulated': 0};
+      }
+
+      map['slideTimers'] = timers;
+      return Transaction.success(map);
+    });
+  }
+
+  Future<void> setTouchEnabled(bool val) =>
+      _ref.child('touchEnabled').set(val);
+
+  Future<void> setVolume(double val) =>
+      _ref.child('volume').set(val.clamp(0.0, 1.0));
+
+  Future<void> setTimerRunning(bool val, {int? base}) async {
+    final updates = <String, dynamic>{'timerRunning': val};
+    if (val) updates['timerStart'] = DateTime.now().millisecondsSinceEpoch;
+    if (base != null) updates['timerBase'] = base;
+    await _ref.update(updates);
+  }
+
+  Future<void> setIframePageIndex(int idx) =>
+      _ref.child('iframePageIndex').set(idx < 0 ? 0 : idx);
+
+  Future<void> setOverlayEnabled(bool val) =>
+      _ref.child('overlayEnabled').set(val);
+
+  Future<void> setPointer(double x, double y) =>
+      _ref.child('pointer').set({
+        'x':      x.clamp(0.0, 1.0),
+        'y':      y.clamp(0.0, 1.0),
+        'active': true,
+      });
+
+  Future<void> clearPointer() =>
+      _ref.child('pointer').update({'active': false});
+
   Future<void> setPointerClick(double x, double y) =>
-      Future.wait(_allProjects.map((p) => _db.ref(p).child('pointerClick').set({
+      _ref.child('pointerClick').set({
         'x':  x.clamp(0.0, 1.0),
         'y':  y.clamp(0.0, 1.0),
         'ts': DateTime.now().millisecondsSinceEpoch,
-      })));
+      });
 
   Future<String?> fetchControlPassword() async {
     try {

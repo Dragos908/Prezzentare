@@ -30,9 +30,6 @@ import '../bloc/control_event.dart';
 // FUNCȚII TOP-LEVEL (shared de ambele panouri)
 // ═════════════════════════════════════════════════════════════════════════════
 
-/// Construiește URL-ul pentru o pagină anume.
-/// Suportă deep-link real pentru Google Slides și Canva embed (canva.com).
-/// Canva site publicat (canva.site) este website normal — URL rămâne intact.
 String _buildPagedUrl(String base, int page) {
   if (page == 0) return base;
   if (base.contains('docs.google.com/presentation')) {
@@ -55,7 +52,6 @@ String _buildPagedUrl(String base, int page) {
       return base;
     }
   }
-  // canva.site (website publicat) și alte iframe-uri → URL nemodificat
   return base;
 }
 
@@ -68,14 +64,11 @@ bool _isCanvaEmbed(String? url) =>
 bool _isCanvaSite(String? url) =>
     url != null && url.contains('canva.site');
 
-/// Returnează true dacă URL-ul suportă navigare per pagină (fără warning).
 bool _supportsDeepLink(String? url) =>
     _isGoogleSlides(url) || _isCanvaEmbed(url) || _isCanvaSite(url);
 
 // ═════════════════════════════════════════════════════════════════════════════
 // SLIDE LIST PANEL
-// Panoul dreapta: lista completă de slide-uri cu timp acumulat.
-// Click pe orice slide → salt direct.
 // ═════════════════════════════════════════════════════════════════════════════
 class SlideListPanel extends StatelessWidget {
   const SlideListPanel({super.key});
@@ -96,15 +89,41 @@ class SlideListPanel extends StatelessWidget {
             children: [
               // ── Header ──
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
-                child: Text(
-                  'SLIDE-URI',
-                  style: const TextStyle(
-                    color:         Colors.white,
-                    fontSize:      12,
-                    fontWeight:    FontWeight.w700,
-                    letterSpacing: 2,
-                  ),
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+                child: Row(
+                  children: [
+                    const Text(
+                      'SLIDE-URI',
+                      style: TextStyle(
+                        color:         Colors.white,
+                        fontSize:      12,
+                        fontWeight:    FontWeight.w700,
+                        letterSpacing: 2,
+                      ),
+                    ),
+                    if (state.slides.isNotEmpty) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 7, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF6C63FF).withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(
+                              color: const Color(0xFF6C63FF).withOpacity(0.35)),
+                        ),
+                        child: Text(
+                          '${state.slides.length} total',
+                          style: const TextStyle(
+                            color:      Color(0xFF6C63FF),
+                            fontSize:   8,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
               Divider(height: 1, color: Colors.white.withOpacity(0.07)),
@@ -280,11 +299,7 @@ class _SlideListItem extends StatelessWidget {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// SANDBOXED PREVIEW IFRAME  (folosit intern de SlideMonitorPanel)
-// • pointer-events: none  → nicio interacțiune a utilizatorului cu iframe-ul
-// • sandbox fără allow-top-navigation → iframe-ul NU poate redirecționa
-//   fereastra parentă în nicio circumstanță
-// • src se actualizează direct în DOM când URL-ul se schimbă
+// SANDBOXED PREVIEW IFRAME
 // ═════════════════════════════════════════════════════════════════════════════
 class _SandboxedPreviewIframe extends StatefulWidget {
   final String url;
@@ -372,7 +387,10 @@ class SlideMonitorPanel extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _MonitorHeader(curIdx: curIdx, total: state.slides.length),
+              _MonitorHeader(
+                curIdx: curIdx,
+                total:  state.slides.length,
+              ),
 
               Expanded(
                 child: SingleChildScrollView(
@@ -381,7 +399,7 @@ class SlideMonitorPanel extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
 
-                      // ── SLIDE CURENT ────────────────────────────────────
+                      // ── SLIDE CURENT ───────────────────────────────────
                       _PreviewLabel(
                         label: 'PE TABLĂ ACUM',
                         color: const Color(0xFF00D9A3),
@@ -407,7 +425,7 @@ class SlideMonitorPanel extends StatelessWidget {
 
                       const SizedBox(height: 20),
 
-                      // ── POINTER PAD ──────────────────────────────────────
+                      // ── POINTER PAD ─────────────────────────────────────
                       _PointerPadSection(
                         slide:           current,
                         iframePageIndex: state.iframePageIndex,
@@ -415,9 +433,9 @@ class SlideMonitorPanel extends StatelessWidget {
 
                       const SizedBox(height: 20),
 
-                      // ── PAGINA URMĂTOARE (în iframe-ul curent) ───────────
-                      // Ascundem pentru Canva — nu suportă navigare externă
-                      if (hasNextPage && nextPageSupportsDeepLink && !_isCanvaEmbed(current.url) && !_isCanvaSite(current.url)) ...[
+                      // ── PAGINA URMĂTOARE (în iframe curent) ─────────────
+                      if (hasNextPage && nextPageSupportsDeepLink &&
+                          !_isCanvaEmbed(current.url) && !_isCanvaSite(current.url)) ...[
                         _PreviewLabel(
                           label: 'PAGINA URMĂTOARE',
                           color: const Color(0xFF00D9A3).withOpacity(0.55),
@@ -435,7 +453,7 @@ class SlideMonitorPanel extends StatelessWidget {
                         const SizedBox(height: 20),
                       ],
 
-                      // ── SLIDE URMĂTOR ────────────────────────────────────
+                      // ── SLIDE URMĂTOR ───────────────────────────────────
                       _PreviewLabel(
                         label: 'SLIDE URMĂTOR',
                         color: Colors.white.withOpacity(0.3),
@@ -444,6 +462,7 @@ class SlideMonitorPanel extends StatelessWidget {
                       const SizedBox(height: 8),
                       if (next != null)
                         GestureDetector(
+                          behavior: HitTestBehavior.opaque,
                           onTap: () => context
                               .read<ControlBloc>()
                               .add(NavigateEvent(nextIdx)),
@@ -460,7 +479,7 @@ class SlideMonitorPanel extends StatelessWidget {
 
                       const SizedBox(height: 20),
 
-                      // ── Bară progres ─────────────────────────────────────
+                      // ── Bară progres ────────────────────────────────────
                       _ProgressSection(
                         current: curIdx,
                         total:   state.slides.length,
@@ -485,7 +504,11 @@ class SlideMonitorPanel extends StatelessWidget {
 class _MonitorHeader extends StatelessWidget {
   final int curIdx;
   final int total;
-  const _MonitorHeader({required this.curIdx, required this.total});
+
+  const _MonitorHeader({
+    required this.curIdx,
+    required this.total,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -552,14 +575,11 @@ class _IframeNavBar extends StatelessWidget {
     return 'IFRAME';
   }
 
-  bool get _hasDeepLink => _supportsDeepLink(url);
-
   bool get _isCanva =>
       url != null && (url!.contains('canva.com') || url!.contains('canva.site'));
 
   @override
   Widget build(BuildContext context) {
-    // Canva nu suportă navigare programatică — ascundem butoanele complet
     if (_isCanva) {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
@@ -1193,90 +1213,6 @@ class _EndThumbnail extends StatelessWidget {
   }
 }
 
-// ── Placeholder Canva (next page fără deep-link) ──────────────────────────────
-class _CanvaNextPagePlaceholder extends StatelessWidget {
-  final SlideModel slide;
-  final int        pageIndex;
-
-  const _CanvaNextPagePlaceholder({
-    required this.slide,
-    required this.pageIndex,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    const color  = Color(0xFF7D2AE8);
-    const accent = Color(0xFF00D9A3);
-
-    return AspectRatio(
-      aspectRatio: 16 / 9,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end:   Alignment.bottomRight,
-              colors: [const Color(0xFF0d0d18), color.withOpacity(0.15)],
-            ),
-            border: Border.all(color: color.withOpacity(0.25)),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 36, height: 36,
-                decoration: BoxDecoration(
-                  shape:  BoxShape.circle,
-                  color:  color.withOpacity(0.15),
-                  border: Border.all(color: color.withOpacity(0.4)),
-                ),
-                child: const Icon(
-                    Icons.design_services_outlined, color: color, size: 16),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'CANVA',
-                style: TextStyle(
-                  color: color, fontSize: 8,
-                  fontWeight: FontWeight.w800, letterSpacing: 2,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                decoration: BoxDecoration(
-                  color:        accent.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(4),
-                  border:       Border.all(color: accent.withOpacity(0.3)),
-                ),
-                child: Text(
-                  'Pagina ${pageIndex + 1}',
-                  style: const TextStyle(
-                    color: accent, fontSize: 11,
-                    fontFamily: 'monospace', fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'Canva nu suportă previzualizare\nper pagină din exterior',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.2),
-                  fontSize: 7.5, height: 1.4,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ── Placeholder generic iframe ────────────────────────────────────────────────
 class _IframePlaceholder extends StatelessWidget {
   final SlideModel slide;
   const _IframePlaceholder({required this.slide});
@@ -1407,14 +1343,18 @@ class _ProgressSection extends StatelessWidget {
             final isActive = i == current;
             final color    = _typeColors[slides[i].type]!;
             return GestureDetector(
+              behavior: HitTestBehavior.opaque,
               onTap: () => onTap(i),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                width:  isActive ? 20 : 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color:        isActive ? color : color.withOpacity(0.25),
-                  borderRadius: BorderRadius.circular(4),
+              child: Padding(                   // <--- ADAUGĂ PADDING-UL PENTRU HITBOX MAI MARE
+                padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 2.0),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  width:  isActive ? 20 : 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color:        isActive ? color : color.withOpacity(0.25),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
                 ),
               ),
             );
@@ -1556,6 +1496,7 @@ class _EmptyPanel extends StatelessWidget {
     );
   }
 }
+
 // ═══════════════════════════════════════════════════════════════════════════
 // POINTER PAD — previzualizare live + mod LASER / CLICK
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1623,7 +1564,6 @@ class _PointerPadSectionState extends State<_PointerPadSection> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
 
-            // ── Header row ──────────────────────────────────────────────
             Row(children: [
               AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
@@ -1668,7 +1608,6 @@ class _PointerPadSectionState extends State<_PointerPadSection> {
             ]),
             const SizedBox(height: 8),
 
-            // ── Mode toggle ──────────────────────────────────────────────
             Row(children: [
               Expanded(child: _ModeBtn(
                 label:  '🔴  LASER',
@@ -1688,7 +1627,6 @@ class _PointerPadSectionState extends State<_PointerPadSection> {
             ]),
             const SizedBox(height: 10),
 
-            // ── Interactive preview pad ──────────────────────────────────
             AspectRatio(
               aspectRatio: 16 / 9,
               child: LayoutBuilder(builder: (_, constraints) {
@@ -1702,13 +1640,11 @@ class _PointerPadSectionState extends State<_PointerPadSection> {
                     borderRadius: BorderRadius.circular(8),
                     child: Stack(fit: StackFit.expand, children: [
 
-                      // Live slide thumbnail — identic cu Presenter View
                       _SlideThumbnailContent(
                         slide:           widget.slide,
                         iframePageIndex: widget.iframePageIndex,
                       ),
 
-                      // Border activ/inactiv
                       AnimatedContainer(
                         duration: const Duration(milliseconds: 150),
                         decoration: BoxDecoration(
@@ -1722,7 +1658,6 @@ class _PointerPadSectionState extends State<_PointerPadSection> {
                         ),
                       ),
 
-                      // Crosshair + dot în timp ce tragi
                       if (_isActive)
                         CustomPaint(
                           painter: _CrosshairPainter(
@@ -1730,7 +1665,6 @@ class _PointerPadSectionState extends State<_PointerPadSection> {
                           ),
                         ),
 
-                      // Dot Firebase când nu tragi tu (alt utilizator activ)
                       if (state.pointerActive && !_isActive)
                         Positioned(
                           left: state.pointerX * sz.width  - 9,
@@ -1748,7 +1682,6 @@ class _PointerPadSectionState extends State<_PointerPadSection> {
                           ),
                         ),
 
-                      // Hint când e inactiv
                       if (!_isActive && !state.pointerActive)
                         Center(child: Container(
                           padding: const EdgeInsets.symmetric(
@@ -1768,7 +1701,6 @@ class _PointerPadSectionState extends State<_PointerPadSection> {
                           ),
                         )),
 
-                      // Badge mod curent
                       Positioned(
                         top: 6, right: 8,
                         child: Container(
@@ -1815,9 +1747,6 @@ class _PointerPadSectionState extends State<_PointerPadSection> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Mode button
-// ─────────────────────────────────────────────────────────────────────────────
 class _ModeBtn extends StatelessWidget {
   final String       label, sub;
   final bool         active;
@@ -1871,9 +1800,6 @@ class _ModeBtn extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Crosshair painter — linie + dot + ring
-// ─────────────────────────────────────────────────────────────────────────────
 class _CrosshairPainter extends CustomPainter {
   final double x, y;
   final Color  color;
@@ -1889,20 +1815,17 @@ class _CrosshairPainter extends CustomPainter {
     final px = x * size.width;
     final py = y * size.height;
 
-    // Linii crosshair
     final linePaint = Paint()
       ..color       = color.withOpacity(0.30)
       ..strokeWidth = 0.8;
     canvas.drawLine(Offset(0, py), Offset(size.width, py), linePaint);
     canvas.drawLine(Offset(px, 0), Offset(px, size.height), linePaint);
 
-    // Dot central plin
     canvas.drawCircle(
       Offset(px, py), 7,
       Paint()..color = color,
     );
 
-    // Ring exterior semi-transparent
     canvas.drawCircle(
       Offset(px, py), 14,
       Paint()
@@ -1917,9 +1840,6 @@ class _CrosshairPainter extends CustomPainter {
       o.x != x || o.y != y || o.color != color;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Thumbnail tip ANNOUNCE — pentru Presenter View și lista de slide-uri
-// ─────────────────────────────────────────────────────────────────────────────
 class _AnnounceThumbnail extends StatelessWidget {
   final SlideModel slide;
   const _AnnounceThumbnail({required this.slide});
@@ -1936,10 +1856,7 @@ class _AnnounceThumbnail extends StatelessWidget {
     return Stack(
       fit: StackFit.expand,
       children: [
-        // Fundal întunecat
         Container(color: const Color(0xFF04040C)),
-
-        // Gradient ambient
         Container(
           decoration: BoxDecoration(
             gradient: RadialGradient(
@@ -1958,8 +1875,6 @@ class _AnnounceThumbnail extends StatelessWidget {
             ),
           ),
         ),
-
-        // Linie de accentColor sus
         Positioned(
           top: 0, left: 0, right: 0,
           child: Container(
@@ -1971,14 +1886,11 @@ class _AnnounceThumbnail extends StatelessWidget {
             ),
           ),
         ),
-
-        // Conținut centrat
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Iconiță telefon
               Container(
                 width: 28, height: 28,
                 decoration: BoxDecoration(
@@ -1986,13 +1898,11 @@ class _AnnounceThumbnail extends StatelessWidget {
                   color: accent.withOpacity(0.12),
                   border: Border.all(color: accent.withOpacity(0.3)),
                 ),
-                child: Center(
-                  child: Text('📵', style: const TextStyle(fontSize: 13)),
+                child: const Center(
+                  child: Text('📵', style: TextStyle(fontSize: 13)),
                 ),
               ),
               const SizedBox(height: 6),
-
-              // Titlu principal
               Text(
                 slide.heading ?? 'Pentru o vizionare plăcută',
                 textAlign: TextAlign.center,
@@ -2006,8 +1916,6 @@ class _AnnounceThumbnail extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 5),
-
-              // Mini reguli
               ...['📵 Silențios', '🤫 Liniște', '💬 Întrebări la final']
                   .map((r) => Padding(
                 padding: const EdgeInsets.only(bottom: 2),
@@ -2021,8 +1929,6 @@ class _AnnounceThumbnail extends StatelessWidget {
             ],
           ),
         ),
-
-        // Badge tip
         Positioned(
           bottom: 5, right: 6,
           child: Container(

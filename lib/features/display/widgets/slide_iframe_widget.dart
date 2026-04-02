@@ -1,35 +1,32 @@
 // lib/features/display/widgets/slide_iframe_widget.dart
 //
-// ── ROOT CAUSE FIX ───────────────────────────────────────────────────────────
+// ── NAVIGARE CANVA ────────────────────────────────────────────────────────────
 //
-// Problema: registerViewFactory() acceptă o singură înregistrare per _viewId.
-// Closure-ul din factory capturează `_iframeEl` din PRIMA instanță de state.
-// Când DoubleBuffer distruge și recreează SlideIframeWidget pentru același
-// slide (A→B→A), noua instanță are `_iframeEl = null` permanent deoarece
-// factory-ul scrie în instanța veche (distrusă). Toate comenzile de navigare
-// devin no-op → "slidurile se opresc".
+// Canva embed (canva.com/design/...) NU suportă parametrul ?slide=N în URL
+// și IGNORĂ postMessage-urile de la pagina părinte (cross-origin).
 //
-// FIX: _activeStates static — înregistrăm instanța CURENTĂ activă per viewId.
-// Factory-ul apelează `_activeStates[_viewId]?._setIframeEl(el)` care scrie
-// întotdeauna în instanța vie, indiferent de câte ori widget-ul e recreat.
+// Soluție funcțională — 3 metode în cascadă:
 //
-// ── NAVIGARE CANVA PREZENTARE (canva.com) ────────────────────────────────────
+//   1. postMessage — formate multiple (pentru Reveal.js, Slidev, iframe-uri custom).
 //
-// postMessage nu funcționează pentru Canva (restricții cross-origin).
-// Canva suportă parametrul `slide=N` în URL-urile de tip /view sau /present.
-// URL Canva embed:  https://www.canva.com/design/DAGxxxx/slug/view?embed
-// → slide 3:        https://www.canva.com/design/DAGxxxx/slug/view?embed&slide=3
+//   2. Click simulat cu coordonate exacte:
+//      Creăm un PointerEvent + MouseEvent cu clientX/Y la jumătatea dreaptă
+//      (sau stângă) a iframe-ului și îl dispatch-uim pe documentul părinte.
+//      Chrome face hit-testing pe coordonate → routează click-ul ÎNĂUNTRUL
+//      iframe-ului cross-origin, exact ca un click fizic al utilizatorului.
+//      Canva reacționează la click pe jumătatea dreaptă (next) / stângă (prev).
 //
-// ── CANVA WEBSITE PUBLICAT (my.canva.site) ────────────────────────────────────
+//   3. contentWindow.focus() + KeyboardEvent pe document.body:
+//      Fallback: mutăm focus-ul în iframe, apoi trimitem ArrowRight/Left.
+//      Funcționează în unele versiuni Chrome, ignorat în altele.
 //
-// URL-urile de tipul https://xxx.my.canva.site sunt website-uri publicate,
-// NU prezentări embed. Nu suportă parametrul slide=N — se încarcă direct
-// ca un site web normal. Nu trimitem postMessage, nu modificăm URL-ul.
-// Se tratează ca _usesUrlNavigation = true (fără postMessage) dar
-// _buildPagedUrl returnează URL-ul nemodificat.
+// ── NAVIGARE GOOGLE SLIDES ───────────────────────────────────────────────────
+// Google Slides suportă ?slide=N → reîncărcăm src cu parametrul corect.
 //
-// ─────────────────────────────────────────────────────────────────────────────
+// ── CANVA SITE (my.canva.site) ───────────────────────────────────────────────
+// Website publicat — fără sub-pagini, src rămâne neschimbat.
 
+import 'dart:async';
 import 'dart:js_interop';
 import 'package:web/web.dart' as web;
 import 'dart:ui_web' as ui;
@@ -37,6 +34,54 @@ import 'dart:ui_web' as ui;
 import 'package:flutter/material.dart';
 import '../../../core/model.dart';
 import '../../../core/firebase_service.dart';
+
+// ── JS interop — KeyboardEvent ────────────────────────────────────────────────
+
+extension type _KbInit._(JSObject _) implements JSObject {
+  external factory _KbInit();
+  external set key(String v);
+  external set code(String v);
+  external set keyCode(int v);
+  external set which(int v);
+  external set bubbles(bool v);
+  external set cancelable(bool v);
+  external set composed(bool v);
+}
+
+@JS('KeyboardEvent')
+extension type _KbEvent._(JSObject _) implements JSObject {
+  external factory _KbEvent(String type, JSObject init);
+}
+
+// ── JS interop — PointerEvent / MouseEvent ────────────────────────────────────
+
+extension type _PointerInit._(JSObject _) implements JSObject {
+  external factory _PointerInit();
+  external set clientX(double v);
+  external set clientY(double v);
+  external set screenX(double v);
+  external set screenY(double v);
+  external set button(int v);
+  external set buttons(int v);
+  external set bubbles(bool v);
+  external set cancelable(bool v);
+  external set composed(bool v);
+  external set isPrimary(bool v);
+  external set pointerId(int v);
+  external set pointerType(String v);
+}
+
+@JS('PointerEvent')
+extension type _PointerEvent._(JSObject _) implements JSObject {
+  external factory _PointerEvent(String type, JSObject init);
+}
+
+@JS('MouseEvent')
+extension type _MouseEvent._(JSObject _) implements JSObject {
+  external factory _MouseEvent(String type, JSObject init);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 class SlideIframeWidget extends StatefulWidget {
   final SlideModel slide;
@@ -60,11 +105,9 @@ class _SlideIframeWidgetState extends State<SlideIframeWidget> {
   late final String _viewId;
   web.HTMLIFrameElement? _iframeEl;
 
-  // Root cause fix: map static viewId -> instanta activa curenta
   static final Map<String, _SlideIframeWidgetState> _activeStates  = {};
   static final Set<String>                          _registeredIds = {};
 
-  // Guard pentru postMessage dublu (folosit doar pentru iframe-uri non-URL-nav)
   int _lastPostedPage = -1;
 
   // ── Detectare tip iframe ───────────────────────────────────────────────────
@@ -72,36 +115,25 @@ class _SlideIframeWidgetState extends State<SlideIframeWidget> {
   bool get _isGoogleSlides =>
       widget.slide.url?.contains('docs.google.com/presentation') ?? false;
 
-  /// Prezentare Canva embed (canva.com/design/...) — suportă slide=N în URL.
   bool get _isCanvaEmbed =>
       (widget.slide.url?.contains('canva.com') ?? false) &&
           !(widget.slide.url?.contains('canva.site') ?? false);
 
-  /// Website publicat Canva (xxx.my.canva.site sau orice *.canva.site).
-  /// Se încarcă direct ca iframe normal — fără parametri slide=N.
   bool get _isCanvaSite =>
       widget.slide.url?.contains('canva.site') ?? false;
 
-  /// true → navigăm schimbând `src` cu parametrul `slide=N` (Google Slides + Canva embed).
-  /// true → și pentru canva.site dar _buildPagedUrl nu adaugă nimic (website simplu).
-  /// false → încercăm postMessage (alte iframe-uri custom).
-  bool get _usesUrlNavigation => _isGoogleSlides || _isCanvaEmbed || _isCanvaSite;
+  bool get _usesUrlNavigation => _isGoogleSlides || _isCanvaSite;
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
-  // Apelat de factory cand creeaza un element DOM nou
   void _setIframeEl(web.HTMLIFrameElement el) {
     _iframeEl = el;
     _iframeEl!.style.pointerEvents = widget.overlayEnabled ? 'none' : 'auto';
   }
 
-  /// Construiește URL-ul cu indexul de pagină pentru tipurile care suportă
-  /// navigarea prin parametru de URL (Google Slides și Canva embed).
-  /// Pentru canva.site (website publicat) returnează URL-ul nemodificat.
   static String _buildPagedUrl(String base, int page) {
     if (page == 0) return base;
 
-    // ── Google Slides ──────────────────────────────────────────────────────
     if (base.contains('docs.google.com/presentation')) {
       try {
         final withoutFragment = base.split('#').first;
@@ -114,26 +146,7 @@ class _SlideIframeWidgetState extends State<SlideIframeWidget> {
       }
     }
 
-    // ── Canva embed (canva.com/design/...) ────────────────────────────────
-    // Suportă ?slide=N (1-indexed) în URL-urile de tip /view sau /present.
-    // Exemplu: https://www.canva.com/design/DAGxxxx/slug/view?embed&slide=3
-    if (base.contains('canva.com') && !base.contains('canva.site')) {
-      try {
-        final withoutFragment = base.split('#').first;
-        final uri    = Uri.parse(withoutFragment);
-        final params = Map<String, String>.from(uri.queryParameters);
-        params['slide'] = (page + 1).toString();
-        return uri.replace(queryParameters: params).toString();
-      } catch (_) {
-        return base;
-      }
-    }
-
-    // ── Canva site publicat (*.canva.site) ────────────────────────────────
-    // Website normal — nu suportă parametri slide=N. Returnăm URL-ul intact.
-    if (base.contains('canva.site')) {
-      return base;
-    }
+    if (base.contains('canva.site')) return base;
 
     return base;
   }
@@ -144,8 +157,6 @@ class _SlideIframeWidgetState extends State<SlideIframeWidget> {
   void initState() {
     super.initState();
     _viewId = 'iframe-${widget.slide.id}-${widget.slide.url.hashCode}';
-
-    // Inregistram ACEASTA instanta ca activa
     _activeStates[_viewId] = this;
 
     if (!_registeredIds.contains(_viewId)) {
@@ -159,8 +170,6 @@ class _SlideIframeWidgetState extends State<SlideIframeWidget> {
         el.style.pointerEvents = widget.overlayEnabled ? 'none' : 'auto';
         el.allowFullscreen     = true;
         el.setAttribute('allow', 'autoplay; fullscreen; picture-in-picture');
-
-        // Root cause fix: scriem in instanta ACTIVA, nu in cea veche
         _activeStates[_viewId]?._setIframeEl(el);
         return el;
       });
@@ -169,49 +178,148 @@ class _SlideIframeWidgetState extends State<SlideIframeWidget> {
 
   @override
   void dispose() {
-    if (_activeStates[_viewId] == this) {
-      _activeStates.remove(_viewId);
-    }
+    if (_activeStates[_viewId] == this) _activeStates.remove(_viewId);
     super.dispose();
   }
 
   // ── Navigare ───────────────────────────────────────────────────────────────
 
-  /// Trimite postMessage (ArrowLeft/Right + metode proprietare) pentru
-  /// iframe-uri care nu suportă URL navigation (non-Canva, non-Google Slides).
+  /// Trimite comenzi de navigare către iframe — 3 metode în cascadă.
   void _sendNavigationToIframe(bool forward) {
+    final keyName = forward ? 'ArrowRight' : 'ArrowLeft';
+    final keyCode = forward ? 39 : 37;
+
+    // ── Metoda 1: postMessage (Reveal.js, Slidev, iframe-uri custom) ──────
     try {
       final iframeWindow = _iframeEl?.contentWindow;
-      if (iframeWindow == null) return;
-
-      final keyName = forward ? 'ArrowRight' : 'ArrowLeft';
-      final keyCode = forward ? 39 : 37;
-
-      iframeWindow.postMessage(
-        '{"type":"keydown","key":"$keyName","keyCode":$keyCode}'.toJS,
-        '*'.toJS,
-      );
-      iframeWindow.postMessage(
-        '{"method":"${forward ? 'goToNextSlide' : 'goToPreviousSlide'}"'
-            ',"params":{}}'.toJS,
-        '*'.toJS,
-      );
-      iframeWindow.postMessage(
-        '{"action":"${forward ? 'next' : 'prev'}","source":"prezentare"}'.toJS,
-        '*'.toJS,
-      );
+      if (iframeWindow != null) {
+        iframeWindow.postMessage(
+          '{"type":"keydown","key":"$keyName","keyCode":$keyCode}'.toJS,
+          '*'.toJS,
+        );
+        iframeWindow.postMessage(
+          '{"method":"${forward ? 'goToNextSlide' : 'goToPreviousSlide'}","params":{}}'.toJS,
+          '*'.toJS,
+        );
+        iframeWindow.postMessage(
+          '{"action":"${forward ? 'next' : 'prev'}","source":"prezentare"}'.toJS,
+          '*'.toJS,
+        );
+        iframeWindow.postMessage(
+          (forward ? 'nextSlide' : 'prevSlide').toJS,
+          '*'.toJS,
+        );
+      }
     } catch (_) {}
 
+    // ── Metoda 2: Click simulat cu coordonate exacte ───────────────────────
+    // Chrome face hit-testing pe clientX/Y → routează click-ul în iframe
+    // chiar dacă e cross-origin. Canva navighează la click pe jumătatea
+    // dreaptă (next) sau stângă (prev) a prezentării.
+    _simulateClickInIframe(forward);
+
+    // ── Metoda 3: contentWindow.focus() + KeyboardEvent (fallback) ────────
+    Future.delayed(const Duration(milliseconds: 80), () {
+      try {
+        // contentWindow.focus() mută focus-ul în browsing context-ul iframe-ului,
+        // nu doar pe elementul DOM — diferența esențială față de iframe.focus().
+        _iframeEl?.contentWindow?.focus();
+      } catch (_) {
+        try { _iframeEl?.focus(); } catch (_) {}
+      }
+
+      try {
+        final init = _KbInit();
+        init.key       = keyName;
+        init.code      = keyName;
+        init.keyCode   = keyCode;
+        init.which     = keyCode;
+        init.bubbles   = true;
+        init.cancelable = true;
+        init.composed  = true;
+
+        final kd = _KbEvent('keydown', init);
+        final ku = _KbEvent('keyup',   init);
+
+        // Dispatch pe document.body (mai aproape de target-ul real al iframe-ului)
+        web.document.body?.dispatchEvent(kd as web.Event);
+        web.document.body?.dispatchEvent(ku as web.Event);
+        web.document.dispatchEvent(kd as web.Event);
+      } catch (_) {}
+    });
+  }
+
+  /// Simulează PointerEvent + MouseEvent la coordonatele corecte din viewport.
+  ///
+  /// Logica: găsim bounding rect-ul iframe-ului, calculăm un punct pe
+  /// jumătatea dreaptă (next) sau stângă (prev), și dispatch-uim evenimentele
+  /// pe elementul de la acele coordonate în documentul părinte.
+  /// Chrome routează click-ul în iframe pe baza coordonatelor, nu a target-ului.
+  void _simulateClickInIframe(bool forward) {
     try {
-      _iframeEl?.focus();
+      final el = _iframeEl;
+      if (el == null) return;
+
+      final rect = el.getBoundingClientRect();
+
+      // Punct de click: 75% din lățime (next) sau 25% (prev), vertical centrat
+      final cx = forward
+          ? rect.left + rect.width  * 0.75
+          : rect.left + rect.width  * 0.25;
+      final cy = rect.top  + rect.height * 0.50;
+
+      // Activăm temporar pointer-events pe iframe
+      // (altfel elementFromPoint returnează overlay-ul Flutter, nu iframe-ul)
+      final prevPE = el.style.pointerEvents;
+      el.style.pointerEvents = 'auto';
+
+      final target = web.document.elementFromPoint(cx.toInt(), cy.toInt()) ?? el;
+
+      // --- PointerEvent (mai modern, suportat de Canva) ---
+      final pInit = _PointerInit();
+      pInit.clientX    = cx;
+      pInit.clientY    = cy;
+      pInit.screenX    = cx;
+      pInit.screenY    = cy;
+      pInit.button     = 0;
+      pInit.buttons    = 1;
+      pInit.bubbles    = true;
+      pInit.cancelable = true;
+      pInit.composed   = true;
+      pInit.isPrimary  = true;
+      pInit.pointerId  = 1;
+      pInit.pointerType = 'mouse';
+
+      target.dispatchEvent(_PointerEvent('pointerover',  pInit) as web.Event);
+      target.dispatchEvent(_PointerEvent('pointerenter', pInit) as web.Event);
+      target.dispatchEvent(_PointerEvent('pointermove',  pInit) as web.Event);
+      target.dispatchEvent(_PointerEvent('pointerdown',  pInit) as web.Event);
+      target.dispatchEvent(_PointerEvent('pointerup',    pInit) as web.Event);
+
+      // --- MouseEvent (compatibilitate) ---
+      final mInit = _PointerInit();
+      mInit.clientX    = cx;
+      mInit.clientY    = cy;
+      mInit.screenX    = cx;
+      mInit.screenY    = cy;
+      mInit.button     = 0;
+      mInit.buttons    = 0;
+      mInit.bubbles    = true;
+      mInit.cancelable = true;
+      mInit.composed   = true;
+
+      target.dispatchEvent(_MouseEvent('mousedown', mInit) as web.Event);
+      target.dispatchEvent(_MouseEvent('mouseup',   mInit) as web.Event);
+      target.dispatchEvent(_MouseEvent('click',     mInit) as web.Event);
+
+      // Restaurăm pointer-events după un scurt delay
+      Timer(const Duration(milliseconds: 200), () {
+        el.style.pointerEvents = prevPE;
+      });
     } catch (_) {}
   }
 
   /// Apelat de overlay la tap/swipe.
-  /// Pentru URL navigation (Google Slides / Canva embed): doar actualizăm Firebase;
-  /// `didUpdateWidget` va schimba `src` automat.
-  /// Pentru canva.site: Firebase se actualizează dar src rămâne același (website).
-  /// Pentru alte iframe-uri: Firebase + postMessage imediat.
   void _navigate(bool forward) {
     final newPage = forward
         ? widget.iframePageIndex + 1
@@ -221,12 +329,9 @@ class _SlideIframeWidgetState extends State<SlideIframeWidget> {
     FirebaseService.instance.setIframePageIndex(newPage);
 
     if (!_usesUrlNavigation) {
-      // postMessage pentru iframe-uri custom (non-Canva, non-Google Slides)
       _lastPostedPage = newPage;
       _sendNavigationToIframe(forward);
     }
-    // Pentru Google Slides și Canva embed: src-ul se schimbă în didUpdateWidget.
-    // Pentru canva.site: src rămâne neschimbat (website simplu, fără sub-pagini).
   }
 
   @override
@@ -235,13 +340,10 @@ class _SlideIframeWidgetState extends State<SlideIframeWidget> {
 
     if (old.iframePageIndex != widget.iframePageIndex) {
       if (_usesUrlNavigation) {
-        // ── Google Slides + Canva embed: schimbăm src cu slide=N ────────────
-        // ── Canva site: _buildPagedUrl returnează același URL (no-op) ────────
-        final newUrl =
-        _buildPagedUrl(widget.slide.url ?? '', widget.iframePageIndex);
+        final newUrl = _buildPagedUrl(
+            widget.slide.url ?? '', widget.iframePageIndex);
         _iframeEl?.src = newUrl;
       } else {
-        // ── Alte iframe-uri: postMessage (cu guard anti-dublu) ──────────────
         final bool forward = widget.iframePageIndex > old.iframePageIndex;
         if (widget.iframePageIndex != _lastPostedPage) {
           _sendNavigationToIframe(forward);

@@ -1,4 +1,4 @@
-// lib/main.dart (Aplicația Web / Display)
+// lib/main.dart
 
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -8,23 +8,20 @@ import 'features/home/home_page.dart';
 import 'features/display/display_page.dart';
 import 'features/control/control_gate_page.dart';
 import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
-import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb;
 
-// Clasa ta cu opțiunile Firebase rămâne neschimbată
 class DefaultFirebaseOptions {
-  static FirebaseOptions get currentPlatform {
-    return web;
-  }
+  static FirebaseOptions get currentPlatform => web;
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyBOW1qjQytXTUKSFnjAnJii35UfhSHP9QM',
-    appId: '1:173424712989:web:c072dfe84cdcc3605955f4',
+    apiKey:            'AIzaSyBOW1qjQytXTUKSFnjAnJii35UfhSHP9QM',
+    appId:             '1:173424712989:web:c072dfe84cdcc3605955f4',
     messagingSenderId: '173424712989',
-    projectId: 'proecte-a5f5f',
-    authDomain: 'proecte-a5f5f.firebaseapp.com',
-    databaseURL: 'https://proecte-a5f5f-default-rtdb.europe-west1.firebasedatabase.app',
-    storageBucket: 'proecte-a5f5f.firebasestorage.app',
-    measurementId: 'G-ZF926TGEQW',
+    projectId:         'proecte-a5f5f',
+    authDomain:        'proecte-a5f5f.firebaseapp.com',
+    databaseURL:       'https://proecte-a5f5f-default-rtdb.europe-west1.firebasedatabase.app',
+    storageBucket:     'proecte-a5f5f.firebasestorage.app',
+    measurementId:     'G-ZF926TGEQW',
   );
 }
 
@@ -35,18 +32,18 @@ Future<void> main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  // Extragem ID-ul proiectului direct din URL-ul browserului
-  String proiectTarget = 'proiect1'; // Fallback în caz că nu pui nimic în URL
+  // Nodul Firebase unde este stocată secvența unică de slide-uri (ID 0–12).
+  // Poate fi suprascris din URL cu ?p=alt_nod (util pentru medii de test).
+  String projectNode = 'prezentare';
 
   if (kIsWeb) {
     final uri = Uri.base;
     if (uri.queryParameters.containsKey('p')) {
-      proiectTarget = uri.queryParameters['p']!;
+      projectNode = uri.queryParameters['p']!;
     }
   }
 
-  // Inițializăm Firebase Service specific pentru proiectul detectat
-  await FirebaseService.instance.init(proiectTarget);
+  await FirebaseService.instance.init(projectNode);
 
   runApp(const App());
 }
@@ -54,18 +51,9 @@ Future<void> main() async {
 final _router = GoRouter(
   initialLocation: '/',
   routes: [
-    GoRoute(
-      path:    '/',
-      builder: (_, __) => const HomePage(),
-    ),
-    GoRoute(
-      path:    '/display',
-      builder: (_, __) => const DisplayPage(),
-    ),
-    GoRoute(
-      path:    '/control',
-      builder: (_, __) => const ControlGatePage(),
-    ),
+    GoRoute(path: '/',        builder: (_, __) => const HomePage()),
+    GoRoute(path: '/display', builder: (_, __) => const DisplayPage()),
+    GoRoute(path: '/control', builder: (_, __) => const ControlGatePage()),
   ],
 );
 
@@ -75,7 +63,7 @@ class App extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp.router(
-      routerConfig: _router,
+      routerConfig:               _router,
       title:                      'Prezentare Interactivă',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
