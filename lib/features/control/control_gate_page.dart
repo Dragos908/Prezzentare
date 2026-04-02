@@ -1,7 +1,8 @@
 // lib/features/control/control_gate_page.dart
 //
-// Login simplu: parolă + numele proiectului (ex: proiect1, proiect3...)
-// Fără selector de proiect, fără broadcast, fără grilă.
+// Panou web — autentificare cu o singură parolă master.
+// Proiectul activ este deja setat din URL (?p=proiect1) în main.dart,
+// prin FirebaseService.init(). Nu e nevoie de nicio selecție suplimentară.
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -21,19 +22,15 @@ class ControlGatePage extends StatefulWidget {
 
 class _ControlGatePageState extends State<ControlGatePage>
     with SingleTickerProviderStateMixin {
-  final _passwordCtrl     = TextEditingController();
-  final _projectCtrl      = TextEditingController(text: 'proiect1');
-  final _passwordFocus    = FocusNode();
-  final _projectFocus     = FocusNode();
+  final _controller       = TextEditingController();
+  final _focusNode        = FocusNode();
   final _keyListenerFocus = FocusNode();
 
   late AnimationController _shakeCtrl;
   late Animation<double>   _shakeAnim;
 
-  bool   _obscure  = true;
-  bool   _hasError = false;
-  bool   _loading  = false;
-  String _errorMsg = '';
+  bool _obscure  = true;
+  bool _hasError = false;
 
   @override
   void initState() {
@@ -51,59 +48,41 @@ class _ControlGatePageState extends State<ControlGatePage>
     ]).animate(CurvedAnimation(parent: _shakeCtrl, curve: Curves.easeInOut));
 
     WidgetsBinding.instance.addPostFrameCallback(
-        (_) => _passwordFocus.requestFocus());
+        (_) => _focusNode.requestFocus());
   }
 
   @override
   void dispose() {
-    _passwordCtrl.dispose();
-    _projectCtrl.dispose();
-    _passwordFocus.dispose();
-    _projectFocus.dispose();
+    _controller.dispose();
+    _focusNode.dispose();
     _keyListenerFocus.dispose();
     _shakeCtrl.dispose();
     super.dispose();
   }
 
-  Future<void> _submit() async {
-    if (_loading) return;
-
-    final password = _passwordCtrl.text.trim();
-    final project  = _projectCtrl.text.trim();
-
-    if (password != _kMasterPassword) {
-      _passwordCtrl.clear();
-      _triggerError('Parolă incorectă');
-      return;
-    }
-    if (project.isEmpty) {
-      _triggerError('Introduceți numele proiectului');
-      return;
-    }
-
-    setState(() => _loading = true);
-
-    await FirebaseService.instance.switchProject(project);
-    if (!mounted) return;
-
-    final bloc = ControlBloc(FirebaseService.instance);
-
-    Navigator.of(context).pushReplacement(
-      PageRouteBuilder(
-        pageBuilder: (_, __, ___) => BlocProvider.value(
-          value: bloc,
-          child: const ControlPage(),
+  void _submit() {
+    if (_controller.text.trim() == _kMasterPassword) {
+      final bloc = ControlBloc(FirebaseService.instance);
+      Navigator.of(context).pushReplacement(
+        PageRouteBuilder(
+          pageBuilder: (_, __, ___) => BlocProvider.value(
+            value: bloc,
+            child: const ControlPage(),
+          ),
+          transitionDuration: Duration.zero,
+          reverseTransitionDuration: Duration.zero,
         ),
-        transitionDuration: Duration.zero,
-        reverseTransitionDuration: Duration.zero,
-      ),
-    );
+      );
+    } else {
+      _controller.clear();
+      _triggerError();
+    }
   }
 
-  void _triggerError(String msg) {
-    setState(() { _hasError = true; _errorMsg = msg; });
+  void _triggerError() {
+    setState(() => _hasError = true);
     _shakeCtrl.forward(from: 0).then((_) {
-      Future.delayed(const Duration(milliseconds: 900), () {
+      Future.delayed(const Duration(milliseconds: 800), () {
         if (mounted) setState(() => _hasError = false);
       });
     });
@@ -129,7 +108,7 @@ class _ControlGatePageState extends State<ControlGatePage>
               child:  child,
             ),
             child: Container(
-              width:   400,
+              width:   380,
               padding: const EdgeInsets.all(36),
               decoration: BoxDecoration(
                 color: const Color(0xFF0d0d18),
@@ -184,98 +163,97 @@ class _ControlGatePageState extends State<ControlGatePage>
                     ),
                   ),
                   const SizedBox(height: 6),
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 200),
-                    child: Text(
-                      _hasError
-                          ? _errorMsg
-                          : 'Introdu parola și proiectul',
-                      key: ValueKey(_hasError ? _errorMsg : 'default'),
-                      style: TextStyle(
-                        color: _hasError
-                            ? const Color(0xFFFF6584)
-                            : Colors.white.withOpacity(0.35),
-                        fontSize: 12,
-                      ),
+                  Text(
+                    _hasError ? 'Parolă incorectă' : 'Introdu parola pentru acces',
+                    style: TextStyle(
+                      color: _hasError
+                          ? const Color(0xFFFF6584)
+                          : Colors.white.withOpacity(0.35),
+                      fontSize: 12,
                     ),
                   ),
                   const SizedBox(height: 28),
 
                   // ── Câmp parolă ───────────────────────────────────────────
-                  _buildField(
-                    controller: _passwordCtrl,
-                    focusNode:  _passwordFocus,
-                    hint:       'Parolă',
-                    obscure:    _obscure,
-                    suffix: IconButton(
-                      icon: Icon(
-                        _obscure
-                            ? Icons.visibility_off_outlined
-                            : Icons.visibility_outlined,
-                        color: Colors.white24, size: 18,
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: _hasError
+                            ? const Color(0xFFFF6584).withOpacity(0.5)
+                            : Colors.white.withOpacity(0.12),
                       ),
-                      onPressed: () => setState(() => _obscure = !_obscure),
+                      color: Colors.white.withOpacity(0.04),
+                    ),
+                    child: TextField(
+                      controller:  _controller,
+                      focusNode:   _focusNode,
+                      obscureText: _obscure,
+                      style: const TextStyle(
+                        color:         Colors.white,
+                        fontSize:      16,
+                        fontFamily:    'monospace',
+                        letterSpacing: 2,
+                      ),
+                      decoration: InputDecoration(
+                        hintText:  '••••••••',
+                        hintStyle: TextStyle(
+                          color:         Colors.white.withOpacity(0.15),
+                          letterSpacing: 4,
+                        ),
+                        border:         InputBorder.none,
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 14),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            _obscure
+                                ? Icons.visibility_off_outlined
+                                : Icons.visibility_outlined,
+                            color: Colors.white24, size: 18,
+                          ),
+                          onPressed: () =>
+                              setState(() => _obscure = !_obscure),
+                        ),
+                      ),
+                      onSubmitted: (_) => _submit(),
                     ),
                   ),
-                  const SizedBox(height: 12),
-
-                  // ── Câmp proiect ──────────────────────────────────────────
-                  _buildField(
-                    controller: _projectCtrl,
-                    focusNode:  _projectFocus,
-                    hint:       'Proiect  (ex: proiect3)',
-                    prefix: const Padding(
-                      padding: EdgeInsets.only(left: 14, right: 8),
-                      child: Icon(Icons.slideshow_outlined,
-                          color: Colors.white24, size: 18),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 16),
 
                   // ── Buton INTRĂ ───────────────────────────────────────────
                   SizedBox(
                     width: double.infinity,
                     child: GestureDetector(
-                      onTap: _loading ? null : _submit,
+                      onTap: _submit,
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 150),
                         padding: const EdgeInsets.symmetric(vertical: 15),
                         alignment: Alignment.center,
                         decoration: BoxDecoration(
-                          gradient: (!_hasError && !_loading)
-                              ? const LinearGradient(
-                                  colors: [Color(0xFF6C63FF), Color(0xFF8B5CF6)],
-                                )
-                              : null,
+                          gradient: _hasError ? null : const LinearGradient(
+                            colors: [Color(0xFF6C63FF), Color(0xFF8B5CF6)],
+                          ),
                           color: _hasError
                               ? const Color(0xFFFF6584).withOpacity(0.15)
-                              : _loading
-                                  ? Colors.white.withOpacity(0.06)
-                                  : null,
+                              : null,
                           borderRadius: BorderRadius.circular(10),
                           border: _hasError
                               ? Border.all(
                                   color: const Color(0xFFFF6584).withOpacity(0.4))
                               : null,
                         ),
-                        child: _loading
-                            ? const SizedBox(
-                                width: 20, height: 20,
-                                child: CircularProgressIndicator(
-                                  color: Colors.white54, strokeWidth: 2,
-                                ),
-                              )
-                            : Text(
-                                _hasError ? 'EROARE' : 'INTRĂ',
-                                style: TextStyle(
-                                  color: _hasError
-                                      ? const Color(0xFFFF6584)
-                                      : Colors.white,
-                                  fontSize:      13,
-                                  fontWeight:    FontWeight.w800,
-                                  letterSpacing: 2,
-                                ),
-                              ),
+                        child: Text(
+                          _hasError ? 'PAROLĂ GREȘITĂ' : 'INTRĂ',
+                          style: TextStyle(
+                            color: _hasError
+                                ? const Color(0xFFFF6584)
+                                : Colors.white,
+                            fontSize:      13,
+                            fontWeight:    FontWeight.w800,
+                            letterSpacing: 2,
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -284,54 +262,6 @@ class _ControlGatePageState extends State<ControlGatePage>
             ),
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildField({
-    required TextEditingController controller,
-    required FocusNode             focusNode,
-    required String                hint,
-    bool                           obscure = false,
-    Widget?                        suffix,
-    Widget?                        prefix,
-  }) {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: _hasError
-              ? const Color(0xFFFF6584).withOpacity(0.5)
-              : Colors.white.withOpacity(0.12),
-        ),
-        color: Colors.white.withOpacity(0.04),
-      ),
-      child: TextField(
-        controller:  controller,
-        focusNode:   focusNode,
-        obscureText: obscure,
-        style: const TextStyle(
-          color:      Colors.white,
-          fontSize:   15,
-          fontFamily: 'monospace',
-          letterSpacing: 1,
-        ),
-        decoration: InputDecoration(
-          hintText:  hint,
-          hintStyle: TextStyle(
-            color:       Colors.white.withOpacity(0.2),
-            fontSize:    13,
-            fontFamily:  'sans-serif',
-            letterSpacing: 0,
-          ),
-          border:         InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(
-              horizontal: 16, vertical: 14),
-          suffixIcon: suffix,
-          prefixIcon: prefix,
-        ),
-        onSubmitted: (_) => _submit(),
       ),
     );
   }
