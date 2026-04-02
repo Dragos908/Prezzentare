@@ -1,14 +1,4 @@
 // lib/features/display/widgets/slide_intro_widget.dart
-//
-// Dacă slide-ul intro are câmpul `url` completat, redă un video YouTube
-// fullscreen (autoplay, loop, fără controale, fără click).
-//
-// URL acceptat:
-//   • standard:  https://www.youtube.com/watch?v=XXXX
-//   • embed:     https://www.youtube.com/embed/XXXX
-//   • scurt:     https://youtu.be/XXXX
-//
-// Dacă `url` lipsește → layout clasic cu orb-uri animate și text.
 
 import 'dart:ui_web' as ui;
 import 'package:web/web.dart' as web;
@@ -34,18 +24,14 @@ class _SlideIntroWidgetState extends State<SlideIntroWidget> {
     if (uri.host == 'youtu.be') return uri.pathSegments.firstOrNull;
     if (uri.host.contains('youtube.com')) {
       if (uri.queryParameters.containsKey('v')) return uri.queryParameters['v'];
-      final segs     = uri.pathSegments;
+      final segs = uri.pathSegments;
       final embedIdx = segs.indexOf('embed');
-      if (embedIdx != -1 && embedIdx + 1 < segs.length) return segs[embedIdx + 1];
+      if (embedIdx != -1 && embedIdx + 1 < segs.length) {
+        return segs[embedIdx + 1];
+      }
     }
     return null;
   }
-
-  static String _embedUrl(String id) =>
-      'https://www.youtube.com/embed/$id'
-          '?autoplay=1&mute=0&controls=0&loop=1&playlist=$id'
-          '&rel=0&showinfo=0&modestbranding=1&iv_load_policy=3&disablekb=1'
-          '&vq=hd2160';
 
   String? get _videoId =>
       (widget.slide.url?.isNotEmpty == true)
@@ -58,16 +44,88 @@ class _SlideIntroWidgetState extends State<SlideIntroWidget> {
     final vid = _videoId;
     if (vid != null) {
       _viewId = 'intro-yt-${_idCounter++}';
+      
+      // HTML-ul custom care include YouTube IFrame API și CSS pentru fullscreen (cover)
+      final htmlContent = '''
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          /* Setări pentru a elimina marginile și a ascunde scroll-ul */
+          body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: black; }
+          
+          /* Truc CSS pentru a face iframe-ul să se comporte ca 'object-fit: cover' */
+          .video-container {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 100vw;
+            height: 56.25vw; /* Ratio 16:9 */
+            min-height: 100vh;
+            min-width: 177.77vh; /* 16/9 = 1.777 */
+            pointer-events: none; /* Previne orice interacțiune (click/pauză) */
+          }
+          iframe { width: 100%; height: 100%; border: none; }
+        </style>
+      </head>
+      <body>
+        <div class="video-container"><div id="player"></div></div>
+        
+        <script>
+          // 1. Încarcă asincron codul pentru YouTube IFrame API
+          var tag = document.createElement('script');
+          tag.src = "https://www.youtube.com/iframe_api";
+          var firstScriptTag = document.getElementsByTagName('script')[0];
+          firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+          var player;
+          // 2. Această funcție este apelată automat de API când e gata
+          function onYouTubeIframeAPIReady() {
+            player = new YT.Player('player', {
+              videoId: '$vid',
+              playerVars: {
+                'autoplay': 1,
+                'controls': 0,
+                'showinfo': 0,
+                'modestbranding': 1,
+                'loop': 1,
+                'playlist': '$vid',
+                'mute': 1, /* MUST BE 1: Browserele blochează autoplay dacă sunetul e pornit */
+                'rel': 0,
+                'iv_load_policy': 3,
+                'disablekb': 1
+              },
+              events: {
+                'onReady': function(event) {
+                  // Sugerează calitatea maximă la încărcare
+                  event.target.setPlaybackQuality('hd1080'); 
+                  event.target.playVideo();
+                },
+                'onStateChange': function(event) {
+                  // Forțează calitatea imediat cum video-ul începe să ruleze
+                  if (event.data == YT.PlayerState.PLAYING) {
+                    event.target.setPlaybackQuality('hd1080');
+                  }
+                }
+              }
+            });
+          }
+        </script>
+      </body>
+      </html>
+      ''';
+
       ui.platformViewRegistry.registerViewFactory(_viewId!, (_) {
         final el = web.HTMLIFrameElement()
-          ..src                 = _embedUrl(vid)
+          ..srcdoc              = htmlContent
           ..style.border        = 'none'
           ..style.width         = '100%'
           ..style.height        = '100%'
-          ..style.pointerEvents = 'none'
+          ..style.pointerEvents = 'none' // Dublă siguranță pentru interacțiuni
           ..allowFullscreen     = true;
-        el.setAttribute('allow',
-            'autoplay; fullscreen; encrypted-media; picture-in-picture');
+        
+        el.setAttribute('allow', 'autoplay; fullscreen; encrypted-media; picture-in-picture');
         return el;
       });
     }
@@ -80,15 +138,16 @@ class _SlideIntroWidgetState extends State<SlideIntroWidget> {
       return Stack(
         fit: StackFit.expand,
         children: [
+          // Renderizarea IFrame-ului creat în initState
           HtmlElementView(viewType: _viewId!),
 
-          // Vignette subtil pe margini
+          // Vignette subtil pe margini (păstrat din designul tău)
           Container(
             decoration: const BoxDecoration(
               gradient: RadialGradient(
                 center: Alignment.center,
                 radius: 1.25,
-                colors: [Colors.transparent, Color(0x44000000)],
+                colors: [Colors.transparent, Color(0x66000000)], // Ușor mai întunecat pentru contrast text
               ),
             ),
           ),
@@ -101,15 +160,18 @@ class _SlideIntroWidgetState extends State<SlideIntroWidget> {
                 widget.slide.subtitle!,
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color:         Colors.white.withOpacity(0.80),
-                  fontSize:      22,
-                  fontWeight:    FontWeight.w300,
-                  letterSpacing: 3,
-                  shadows: const [Shadow(color: Colors.black, blurRadius: 16)],
+                  color:         Colors.white.withOpacity(0.90),
+                  fontSize:      24,
+                  fontWeight:    FontWeight.w400,
+                  letterSpacing: 2,
+                  shadows: const [
+                    Shadow(color: Colors.black87, blurRadius: 10, offset: Offset(0, 2))
+                  ],
                 ),
               )
                   .animate()
-                  .fadeIn(delay: 900.ms, duration: 1200.ms),
+                  .fadeIn(delay: 900.ms, duration: 1200.ms)
+                  .slideY(begin: 0.2, end: 0, curve: Curves.easeOut),
             ),
         ],
       );
@@ -149,6 +211,14 @@ class _SlideIntroWidgetState extends State<SlideIntroWidget> {
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: hexToColor(e.value).withOpacity(0.22),
+                  // Am adăugat un blur pentru a face orb-urile mai organice
+                  boxShadow: [
+                    BoxShadow(
+                      color: hexToColor(e.value).withOpacity(0.1),
+                      blurRadius: 100,
+                      spreadRadius: 20,
+                    )
+                  ]
                 ),
               )
                   .animate(
@@ -185,7 +255,7 @@ class _SlideIntroWidgetState extends State<SlideIntroWidget> {
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize:      30,
-                    color:         Colors.white.withOpacity(0.55),
+                    color:         Colors.white.withOpacity(0.65),
                     fontWeight:    FontWeight.w300,
                     letterSpacing: 1.5,
                   ),
@@ -200,4 +270,12 @@ class _SlideIntroWidgetState extends State<SlideIntroWidget> {
       ],
     );
   }
+}
+
+// O funcție helper presupusă că o ai undeva în proiect
+Color hexToColor(String hexString) {
+  final buffer = StringBuffer();
+  if (hexString.length == 6 || hexString.length == 7) buffer.write('ff');
+  buffer.write(hexString.replaceFirst('#', ''));
+  return Color(int.parse(buffer.toString(), radix: 16));
 }
