@@ -44,8 +44,7 @@ class _SlideIntroWidgetState extends State<SlideIntroWidget> {
   static String _embedUrl(String id) =>
       'https://www.youtube.com/embed/$id'
           '?autoplay=1&mute=0&controls=0&loop=1&playlist=$id'
-          '&rel=0&showinfo=0&modestbranding=1&iv_load_policy=3&disablekb=1'
-          '&vq=hd2160';
+          '&rel=0&showinfo=0&modestbranding=1&iv_load_policy=3&disablekb=1';
 
   String? get _videoId =>
       (widget.slide.url?.isNotEmpty == true)
