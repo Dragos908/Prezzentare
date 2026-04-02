@@ -3,7 +3,7 @@ import 'dart:ui_web' as ui;
 import 'package:web/web.dart' as web;
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
-import '../../../core/model.dart'; // Verifică dacă calea este corectă
+import '../../../../core/model.dart'; // Verifică dacă calea este corectă
 
 // 1. Declarăm Widget-ul principal
 class SlideIntroWidget extends StatefulWidget {
