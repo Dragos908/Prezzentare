@@ -1,42 +1,11 @@
-// lib/features/display/widgets/slide_intro_widget.dart
-
+import 'dart:js_interop'; // <--- IMPORT NOU
 import 'dart:ui_web' as ui;
 import 'package:web/web.dart' as web;
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import '../../../core/model.dart';
 
-class SlideIntroWidget extends StatefulWidget {
-  final SlideModel slide;
-  const SlideIntroWidget({required this.slide, super.key});
-
-  @override
-  State<SlideIntroWidget> createState() => _SlideIntroWidgetState();
-}
-
-class _SlideIntroWidgetState extends State<SlideIntroWidget> {
-  static int _idCounter = 0;
-  String? _viewId;
-
-  static String? _extractYoutubeId(String url) {
-    final uri = Uri.tryParse(url);
-    if (uri == null) return null;
-    if (uri.host == 'youtu.be') return uri.pathSegments.firstOrNull;
-    if (uri.host.contains('youtube.com')) {
-      if (uri.queryParameters.containsKey('v')) return uri.queryParameters['v'];
-      final segs = uri.pathSegments;
-      final embedIdx = segs.indexOf('embed');
-      if (embedIdx != -1 && embedIdx + 1 < segs.length) {
-        return segs[embedIdx + 1];
-      }
-    }
-    return null;
-  }
-
-  String? get _videoId =>
-      (widget.slide.url?.isNotEmpty == true)
-          ? _extractYoutubeId(widget.slide.url!)
-          : null;
+// ... restul codului tău (extragere ID, etc.) rămâne neschimbat până la initState ...
 
   @override
   void initState() {
@@ -45,69 +14,39 @@ class _SlideIntroWidgetState extends State<SlideIntroWidget> {
     if (vid != null) {
       _viewId = 'intro-yt-${_idCounter++}';
       
-      // HTML-ul custom care include YouTube IFrame API și CSS pentru fullscreen (cover)
       final htmlContent = '''
       <!DOCTYPE html>
       <html>
       <head>
         <style>
-          /* Setări pentru a elimina marginile și a ascunde scroll-ul */
           body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: black; }
-          
-          /* Truc CSS pentru a face iframe-ul să se comporte ca 'object-fit: cover' */
           .video-container {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            width: 100vw;
-            height: 56.25vw; /* Ratio 16:9 */
-            min-height: 100vh;
-            min-width: 177.77vh; /* 16/9 = 1.777 */
-            pointer-events: none; /* Previne orice interacțiune (click/pauză) */
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 100vw; height: 56.25vw; min-height: 100vh; min-width: 177.77vh;
+            pointer-events: none;
           }
           iframe { width: 100%; height: 100%; border: none; }
         </style>
       </head>
       <body>
         <div class="video-container"><div id="player"></div></div>
-        
         <script>
-          // 1. Încarcă asincron codul pentru YouTube IFrame API
           var tag = document.createElement('script');
           tag.src = "https://www.youtube.com/iframe_api";
           var firstScriptTag = document.getElementsByTagName('script')[0];
           firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 
           var player;
-          // 2. Această funcție este apelată automat de API când e gata
           function onYouTubeIframeAPIReady() {
             player = new YT.Player('player', {
               videoId: '$vid',
               playerVars: {
-                'autoplay': 1,
-                'controls': 0,
-                'showinfo': 0,
-                'modestbranding': 1,
-                'loop': 1,
-                'playlist': '$vid',
-                'mute': 1, /* MUST BE 1: Browserele blochează autoplay dacă sunetul e pornit */
-                'rel': 0,
-                'iv_load_policy': 3,
-                'disablekb': 1
+                'autoplay': 1, 'controls': 0, 'modestbranding': 1,
+                'loop': 1, 'playlist': '$vid', 'mute': 1, 'rel': 0
               },
               events: {
-                'onReady': function(event) {
-                  // Sugerează calitatea maximă la încărcare
-                  event.target.setPlaybackQuality('hd1080'); 
-                  event.target.playVideo();
-                },
-                'onStateChange': function(event) {
-                  // Forțează calitatea imediat cum video-ul începe să ruleze
-                  if (event.data == YT.PlayerState.PLAYING) {
-                    event.target.setPlaybackQuality('hd1080');
-                  }
-                }
+                'onReady': function(e) { e.target.setPlaybackQuality('hd1080'); e.target.playVideo(); },
+                'onStateChange': function(e) { if(e.data == 1) e.target.setPlaybackQuality('hd1080'); }
               }
             });
           }
@@ -118,11 +57,11 @@ class _SlideIntroWidgetState extends State<SlideIntroWidget> {
 
       ui.platformViewRegistry.registerViewFactory(_viewId!, (_) {
         final el = web.HTMLIFrameElement()
-          ..srcdoc              = htmlContent
+          ..srcdoc              = htmlContent.toJS // <--- REPARAT AICI (.toJS)
           ..style.border        = 'none'
           ..style.width         = '100%'
           ..style.height        = '100%'
-          ..style.pointerEvents = 'none' // Dublă siguranță pentru interacțiuni
+          ..style.pointerEvents = 'none'
           ..allowFullscreen     = true;
         
         el.setAttribute('allow', 'autoplay; fullscreen; encrypted-media; picture-in-picture');
@@ -130,6 +69,7 @@ class _SlideIntroWidgetState extends State<SlideIntroWidget> {
       });
     }
   }
+
 
   @override
   Widget build(BuildContext context) {
