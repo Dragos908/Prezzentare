@@ -27,7 +27,8 @@ class _SlideIntroWidgetState extends State<SlideIntroWidget> {
   void initState() {
     super.initState();
 
-    _videoId = 'budRHyQ_zzs';
+    // AICI AM MODIFICAT: Am pus ID-ul extras din link-ul tău (8geijnkhe4Y)
+    _videoId = '8geijnkhe4Y';
 
     final vid = _videoId;
     if (vid != null) {
