@@ -25,7 +25,7 @@ class _SlideAnnounceWidgetState extends State<SlideAnnounceWidget>
     (icon: '📵', text: 'Opriți sau puneți pe silențios telefonul'),
     (icon: '🤫', text: 'Păstrați liniștea în timpul prezentării'),
     (icon: '📸', text: 'Fotografierea este permisă fără bliț'),
-    (icon: '🚪', text: 'Intrările/ieșirile — discret, între slide-uri'),
+    (icon: '🚪', text: 'Intrările/ieșirile — discret, între lucrări'),
   ];
 
   @override
