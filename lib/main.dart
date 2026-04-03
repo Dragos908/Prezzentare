@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'features/home/home_page.dart';
 import 'features/display/display_page.dart';
 import 'features/control/control_gate_page.dart';
+import 'features/viewer/viewer_page.dart';
 import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
 import 'package:flutter/foundation.dart' show kIsWeb;
 
@@ -53,6 +54,7 @@ final _router = GoRouter(
   routes: [
     GoRoute(path: '/',        builder: (_, __) => const HomePage()),
     GoRoute(path: '/display', builder: (_, __) => const DisplayPage()),
+    GoRoute(path: '/viewer',  builder: (_, __) => const ViewerPage()),
     GoRoute(path: '/control', builder: (_, __) => const ControlGatePage()),
   ],
 );

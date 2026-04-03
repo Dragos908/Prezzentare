@@ -57,6 +57,14 @@ class HomePage extends StatelessWidget {
                 ),
                 const SizedBox(width: 24),
                 _ModeCard(
+                  icon:        Icons.slideshow_outlined,
+                  label:       'VIEWER',
+                  description: 'Vizualizare + control\nsub-slide-uri (telefon)',
+                  color:       const Color(0xFFFFBE21),
+                  onTap:       () => context.go('/viewer'),
+                ),
+                const SizedBox(width: 24),
+                _ModeCard(
                   icon:        Icons.tune_outlined,
                   label:       'CONTROL',
                   description: 'Panoul profesorului\n(necesită parolă)',

@@ -27,9 +27,7 @@ class _SlideIntroWidgetState extends State<SlideIntroWidget> {
   void initState() {
     super.initState();
 
-    // 🔴 Am setat ID-ul videoclipului extras din linkul tău:
-    // https://youtu.be/8geijnkhe4Y?si=vPGSzVi93eCvaBQm
-    _videoId = '8geijnkhe4Y';
+    _videoId = 'budRHyQ_zzs';
 
     final vid = _videoId;
     if (vid != null) {
