@@ -30,8 +30,9 @@ jobs:
         run: flutter build web --release --base-href "/Prezzentare/"
 
       - name: Upload artifact
-        # 2. Poți încerca actualizarea la v4 dacă este disponibilă, pentru a rula nativ pe Node.js 24
-        uses: actions/upload-pages-artifact@v3 
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
 
       - name: Deploy to GitHub Pages
         id: deployment
