@@ -9,12 +9,17 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../core/firebase_service.dart';
 import 'bloc/control_bloc.dart';
+import '../settings/settings_page.dart';
 import 'control_page.dart';
 
-const _kMasterPassword = 'adf145';
+const _kFallbackPassword = 'adf145'; // folosit doar dacă nu există parolă în DB
+
+/// Ce se deschide după introducerea parolei.
+enum GateTarget { control, settings }
 
 class ControlGatePage extends StatefulWidget {
-  const ControlGatePage({super.key});
+  final GateTarget target;
+  const ControlGatePage({super.key, this.target = GateTarget.control});
 
   @override
   State<ControlGatePage> createState() => _ControlGatePageState();
@@ -31,6 +36,10 @@ class _ControlGatePageState extends State<ControlGatePage>
 
   bool _obscure  = true;
   bool _hasError = false;
+
+  // ── Parola reală, citită din Firebase RTDB (nod `controlPassword`) ────────
+  String?  _dbPassword;
+  bool     _loadingPassword = true;
 
   @override
   void initState() {
@@ -49,6 +58,17 @@ class _ControlGatePageState extends State<ControlGatePage>
 
     WidgetsBinding.instance.addPostFrameCallback(
             (_) => _focusNode.requestFocus());
+
+    _loadPassword();
+  }
+
+  Future<void> _loadPassword() async {
+    final pass = await FirebaseService.instance.fetchControlPassword();
+    if (!mounted) return;
+    setState(() {
+      _dbPassword      = pass;
+      _loadingPassword = false;
+    });
   }
 
   @override
@@ -61,13 +81,21 @@ class _ControlGatePageState extends State<ControlGatePage>
   }
 
   void _submit() {
-    if (_controller.text.trim() == _kMasterPassword) {
+    if (_loadingPassword) return; // nu compara înainte să știm parola reală
+
+    final expected = (_dbPassword != null && _dbPassword!.isNotEmpty)
+        ? _dbPassword!
+        : _kFallbackPassword;
+
+    if (_controller.text.trim() == expected) {
       final bloc = ControlBloc(FirebaseService.instance);
       Navigator.of(context).pushReplacement(
         PageRouteBuilder(
           pageBuilder: (_, __, ___) => BlocProvider.value(
             value: bloc,
-            child: const ControlPage(),
+            child: widget.target == GateTarget.settings
+                ? const SettingsPage()
+                : const ControlPage(),
           ),
           transitionDuration: Duration.zero,
           reverseTransitionDuration: Duration.zero,
@@ -225,18 +253,18 @@ class _ControlGatePageState extends State<ControlGatePage>
                   SizedBox(
                     width: double.infinity,
                     child: GestureDetector(
-                      onTap: _submit,
+                      onTap: _loadingPassword ? null : _submit,
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 150),
                         padding: const EdgeInsets.symmetric(vertical: 15),
                         alignment: Alignment.center,
                         decoration: BoxDecoration(
-                          gradient: _hasError ? null : const LinearGradient(
+                          gradient: _hasError || _loadingPassword ? null : const LinearGradient(
                             colors: [Color(0xFF6C63FF), Color(0xFF8B5CF6)],
                           ),
                           color: _hasError
                               ? const Color(0xFFFF6584).withOpacity(0.15)
-                              : null,
+                              : (_loadingPassword ? Colors.white.withOpacity(0.05) : null),
                           borderRadius: BorderRadius.circular(10),
                           border: _hasError
                               ? Border.all(
@@ -244,11 +272,13 @@ class _ControlGatePageState extends State<ControlGatePage>
                               : null,
                         ),
                         child: Text(
-                          _hasError ? 'PAROLĂ GREȘITĂ' : 'INTRĂ',
+                          _loadingPassword
+                              ? 'SE ÎNCARCĂ...'
+                              : (_hasError ? 'PAROLĂ GREȘITĂ' : 'INTRĂ'),
                           style: TextStyle(
                             color: _hasError
                                 ? const Color(0xFFFF6584)
-                                : Colors.white,
+                                : (_loadingPassword ? Colors.white38 : Colors.white),
                             fontSize:      13,
                             fontWeight:    FontWeight.w800,
                             letterSpacing: 2,

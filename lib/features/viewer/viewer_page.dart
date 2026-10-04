@@ -141,10 +141,14 @@ class _ViewerPageState extends State<ViewerPage> {
             // ── Slide display ───────────────────────────────────────────────
             Expanded(
               child: SlideRenderer(
-                slide:           slide,
-                touchEnabled:    false,
-                iframePageIndex: _state.iframePageIndex,
-                overlayEnabled:  false,
+                slide:            slide,
+                touchEnabled:     false,
+                iframePageIndex:  _state.iframePageIndex,
+                overlayEnabled:   false,
+                // Viewer = ecran secundar: video mut și fără heartbeat
+                // (heartbeat-ul îl publică doar Display-ul principal).
+                muted:            true,
+                publishHeartbeat: false,
               ),
             ),
 

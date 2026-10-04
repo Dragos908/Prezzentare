@@ -54,6 +54,15 @@ class PresentationState extends Equatable {
   final double pointerY;
   final bool pointerActive;
 
+  // ── Vizibilitate cronometru (cerință #1) ──────────────────────────────────
+  // Controlează afișarea cronometrului general în UI-ul de Control:
+  // chip-ul din bara de sus, secțiunea „Cronometre" din centru, și timpul
+  // acumulat afișat lângă fiecare slide din lista din dreapta. Nu afectează
+  // funcționarea propriu-zisă a cronometrului (continuă să ruleze/acumuleze
+  // în fundal, control via tastatură P/R rămâne activ) — doar vizibilitatea.
+  // Persistat în Firebase sub cheia `timerVisible`.
+  final bool timerVisible;
+
   const PresentationState({
     this.currentSlide       = 0,
     this.touchEnabled       = true,
@@ -68,6 +77,7 @@ class PresentationState extends Equatable {
     this.pointerX           = 0.5,
     this.pointerY           = 0.5,
     this.pointerActive      = false,
+    this.timerVisible       = true,
   });
 
   int get timerTotalMs {
@@ -115,6 +125,7 @@ class PresentationState extends Equatable {
     double?                   pointerX,
     double?                   pointerY,
     bool?                     pointerActive,
+    bool?                     timerVisible,
   }) => PresentationState(
     currentSlide:    currentSlide    ?? this.currentSlide,
     touchEnabled:    touchEnabled    ?? this.touchEnabled,
@@ -129,6 +140,7 @@ class PresentationState extends Equatable {
     pointerX:        pointerX        ?? this.pointerX,
     pointerY:        pointerY        ?? this.pointerY,
     pointerActive:   pointerActive   ?? this.pointerActive,
+    timerVisible:    timerVisible    ?? this.timerVisible,
   );
 
   @override
@@ -136,11 +148,15 @@ class PresentationState extends Equatable {
     currentSlide, touchEnabled, volume,
     timerRunning, timerBase, timerStart,
     slides, slideTimers, iframePageIndex, overlayEnabled,
-    pointerX, pointerY, pointerActive,
+    pointerX, pointerY, pointerActive, timerVisible,
   ];
 }
 
 enum SlideType { intro, transition, iframe, end, announce }
+
+// Sursă hibridă pentru slide-urile de tip video: fie link din baza de date
+// (network), fie fișier local împachetat cu aplicația (asset).
+enum VideoSourceType { network, asset }
 
 class SlideModel extends Equatable {
   final int id;
@@ -155,6 +171,57 @@ class SlideModel extends Equatable {
   final String? url;
   final String? staticImageUrl;
 
+  // ── Sursă hibridă video (cerință #2) ──────────────────────────────────────
+  // videoSource == null            → slide-ul nu redă video (comportament vechi)
+  // videoSource == network         → redă din `url` (link stocat în Firebase)
+  // videoSource == asset           → redă din `localAssetPath` (fișier local,
+  //                                   NU trece prin baza de date/rețea)
+  final VideoSourceType? videoSource;
+  final String? localAssetPath;
+
+  // ── Buclă video / freeze-black (cerință #2) ───────────────────────────────
+  // videoLoop == null  → comportament implicit: bucla infinită DOAR pentru
+  //                       slide-ul de tip intro (ex: slide 1); orice alt
+  //                       slide video redă o singură dată, apoi ecranul se
+  //                       stinge treptat spre negru și rămâne înghețat până
+  //                       la avansul manual din Control.
+  // videoLoop == true  → forțează bucla infinită, indiferent de tip.
+  // videoLoop == false → forțează redare unică + freeze-black, indiferent de tip.
+  final bool? videoLoop;
+
+  // ── Redare video (opțional) ───────────────────────────────────────────────
+  // videoMuted == true  → videoclipul pornește fără sunet (util pentru bucla
+  //                        de intro, care rulează în fundal).
+  // videoFit   == 'cover'   → umple tot ecranul (implicit, poate tăia marginile)
+  // videoFit   == 'contain' → se vede tot cadrul, cu benzi negre dacă e nevoie
+  final bool?   videoMuted;
+  final String? videoFit;
+
+  // ── Tranziția de INTRARE a slide-ului (opțional) ─────────────────────────
+  //   'flash' (implicit) → crossfade + dâră de lumină
+  //   'fade'             → crossfade simplu, fără dâră de lumină
+  //   'black'            → ecranul se stinge spre negru, apoi apare slide-ul
+  //   'cut'              → schimbare instantanee
+  final String? transitionIn;
+
+  // ── Slide de anunț: rândurile cu reguli (opțional) ────────────────────────
+  // Dacă lipsește, panoul de anunț folosește regulile implicite.
+  final List<String>? rules;
+
+  /// True dacă acest slide trebuie să reia videoclipul la infinit.
+  /// Implicit: doar slide-urile de tip [SlideType.intro].
+  bool get loopsForever => videoLoop ?? (type == SlideType.intro);
+
+  /// Calea/URL-ul fișierului video al slide-ului (asset sau link), sau ''.
+  String get videoPath =>
+      (videoSource == VideoSourceType.asset ? localAssetPath : url) ?? '';
+
+  /// True dacă fișierul video este un .mov (QuickTime).
+  bool get isMovVideo {
+    final clean = videoPath.toLowerCase().split('?').first.split('#').first;
+    return clean.endsWith('.mov');
+  }
+
   const SlideModel({
     required this.id,
     required this.type,
@@ -167,6 +234,13 @@ class SlideModel extends Equatable {
     this.color2,
     this.url,
     this.staticImageUrl,
+    this.videoSource,
+    this.localAssetPath,
+    this.videoLoop,
+    this.videoMuted,
+    this.videoFit,
+    this.transitionIn,
+    this.rules,
   });
 
   factory SlideModel.fromMap(Map<String, dynamic> map) => SlideModel(
@@ -181,7 +255,29 @@ class SlideModel extends Equatable {
     color2:         map['color2'] as String?,
     url:            map['url'] as String?,
     staticImageUrl: map['staticImageUrl'] as String?,
+    videoSource:    map['videoSource'] != null
+        ? VideoSourceType.values.byName(map['videoSource'] as String)
+        : null,
+    localAssetPath: map['localAssetPath'] as String?,
+    videoLoop:      map['videoLoop'] as bool?,
+    videoMuted:     map['videoMuted'] as bool?,
+    videoFit:       map['videoFit'] as String?,
+    transitionIn:   map['transitionIn'] as String?,
+    rules:          _stringList(map['rules']),
   );
+
+  /// Firebase poate întoarce o listă (chei 0,1,2…) sau un Map — le acceptăm pe
+  /// amândouă și ignorăm elementele goale.
+  static List<String>? _stringList(dynamic v) {
+    if (v == null) return null;
+    final Iterable<dynamic> items =
+        v is Map ? v.values : (v is Iterable ? v : const <dynamic>[]);
+    final out = items
+        .where((e) => e != null && e.toString().trim().isNotEmpty)
+        .map((e) => e.toString().trim())
+        .toList();
+    return out.isEmpty ? null : out;
+  }
 
   Map<String, dynamic> toMap() => {
     'id':    id,
@@ -195,12 +291,24 @@ class SlideModel extends Equatable {
     if (color2         != null) 'color2':         color2,
     if (url            != null) 'url':            url,
     if (staticImageUrl != null) 'staticImageUrl': staticImageUrl,
+    if (videoSource    != null) 'videoSource':    videoSource!.name,
+    if (localAssetPath != null) 'localAssetPath': localAssetPath,
+    if (videoLoop      != null) 'videoLoop':      videoLoop,
+    if (videoMuted     != null) 'videoMuted':     videoMuted,
+    if (videoFit       != null) 'videoFit':       videoFit,
+    if (transitionIn   != null) 'transitionIn':   transitionIn,
+    if (rules          != null) 'rules':          rules,
   };
+
+  /// True dacă acest slide are un video de redat (din DB sau local).
+  bool get isVideoSlide => videoSource != null;
 
   @override
   List<Object?> get props => [
     id, type, title, heading, subtitle,
     orbColors, animation, color1, color2, url, staticImageUrl,
+    videoSource, localAssetPath, videoLoop,
+    videoMuted, videoFit, transitionIn, rules,
   ];
 }
 

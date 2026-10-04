@@ -143,6 +143,74 @@ class OverlayToggleWidget extends StatelessWidget {
   }
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// TIMER VISIBILITY TOGGLE (cerință #1)
+// ═════════════════════════════════════════════════════════════════════════════
+class TimerVisibilityToggleWidget extends StatelessWidget {
+  const TimerVisibilityToggleWidget({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocBuilder<ControlBloc, PresentationState>(
+      builder: (context, state) {
+        final visible = state.timerVisible;
+        final color = visible
+            ? const Color(0xFF6C63FF)
+            : Colors.white38;
+
+        return GestureDetector(
+          onTap: () =>
+              context.read<ControlBloc>().add(ToggleTimerVisibleEvent()),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color:        color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: color.withOpacity(0.4)),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  visible
+                      ? Icons.timer_outlined
+                      : Icons.timer_off_outlined,
+                  color: color, size: 18,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'VIZIBILITATE CRONOMETRU',
+                        style: TextStyle(
+                          color:         color,
+                          fontSize:      9,
+                          fontWeight:    FontWeight.w700,
+                          letterSpacing: 1.5,
+                        ),
+                      ),
+                      Text(
+                        visible
+                            ? 'Vizibil — bară, secțiune, listă slide-uri'
+                            : 'Ascuns — cronometrul rulează în fundal',
+                        style: TextStyle(color: color.withOpacity(0.6),
+                            fontSize: 10),
+                      ),
+                    ],
+                  ),
+                ),
+                _Switch(enabled: visible, color: color),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
 // ── Switch vizual reutilizabil ────────────────────────────────────────────────
 class _Switch extends StatelessWidget {
   final bool  enabled;
@@ -582,6 +650,42 @@ class _CompactTimerPanelState extends State<CompactTimerPanel> {
       builder: (context, state) {
         final bloc   = context.read<ControlBloc>();
         final genMs  = state.timerTotalMs;
+
+        // ── Vizibilitate cronometru (cerință #1) ────────────────────────────
+        // Cronometrul continuă să ruleze/acumuleze în fundal (P/R rămân
+        // funcționale din tastatură) — doar afișarea este ascunsă.
+        if (!state.timerVisible) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(14, 6, 14, 14),
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 16),
+              decoration: BoxDecoration(
+                color:        Colors.white.withOpacity(0.03),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.white.withOpacity(0.07)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.timer_off_outlined,
+                      size: 15, color: Colors.white.withOpacity(0.2)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Cronometru ascuns — activează din secțiunea '
+                      'TABLĂ INTERACTIVĂ',
+                      style: TextStyle(
+                        color:    Colors.white.withOpacity(0.25),
+                        fontSize: 10,
+                        height:   1.3,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
 
         final curIdx   = state.currentSlide;
         final curTimer = state.slideTimers[curIdx];

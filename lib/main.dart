@@ -8,6 +8,7 @@ import 'features/home/home_page.dart';
 import 'features/display/display_page.dart';
 import 'features/control/control_gate_page.dart';
 import 'features/viewer/viewer_page.dart';
+import 'core/theme/app_tokens.dart';
 import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
 import 'package:flutter/foundation.dart' show kIsWeb;
 
@@ -21,7 +22,6 @@ class DefaultFirebaseOptions {
     projectId:         'proecte-a5f5f',
     authDomain:        'proecte-a5f5f.firebaseapp.com',
     databaseURL:       'https://proecte-a5f5f-default-rtdb.europe-west1.firebasedatabase.app',
-    storageBucket:     'proecte-a5f5f.firebasestorage.app',
     measurementId:     'G-ZF926TGEQW',
   );
 }
@@ -56,6 +56,11 @@ final _router = GoRouter(
     GoRoute(path: '/display', builder: (_, __) => const DisplayPage()),
     GoRoute(path: '/viewer',  builder: (_, __) => const ViewerPage()),
     GoRoute(path: '/control', builder: (_, __) => const ControlGatePage()),
+    // Setări: protejată de aceeași parolă ca /control
+    GoRoute(
+      path: '/settings',
+      builder: (_, __) => const ControlGatePage(target: GateTarget.settings),
+    ),
   ],
 );
 
@@ -69,6 +74,8 @@ class App extends StatelessWidget {
       title:                      'Prezentare Interactivă',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
+        // tokeni de design (culori, spațiere, raze) pentru control + setări
+        extensions: const <ThemeExtension<dynamic>>[AppTokens.dark],
         scaffoldBackgroundColor: const Color(0xFF0a0a12),
         colorScheme: const ColorScheme.dark(
           primary:   Color(0xFF6C63FF),

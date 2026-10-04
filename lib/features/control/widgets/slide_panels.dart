@@ -25,6 +25,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../core/model.dart';
 import '../bloc/control_bloc.dart';
 import '../bloc/control_event.dart';
+import 'video_sync_monitor.dart';
+import '../../display/widgets/slide_announce_widget.dart';
 
 // ═════════════════════════════════════════════════════════════════════════════
 // FUNCȚII TOP-LEVEL (shared de ambele panouri)
@@ -154,6 +156,9 @@ class SlideListPanel extends StatelessWidget {
                       index:    i,
                       isActive: isActive,
                       timeMs:   ms,
+                      // Cerință #1: timpul acumulat lângă fiecare slide se
+                      // ascunde complet împreună cu restul cronometrului.
+                      showTime: state.timerVisible,
                       onTap:    () => bloc.add(NavigateEvent(i)),
                     );
                   },
@@ -172,6 +177,7 @@ class _SlideListItem extends StatelessWidget {
   final int          index;
   final bool         isActive;
   final int          timeMs;
+  final bool         showTime;
   final VoidCallback onTap;
 
   const _SlideListItem({
@@ -179,6 +185,7 @@ class _SlideListItem extends StatelessWidget {
     required this.index,
     required this.isActive,
     required this.timeMs,
+    this.showTime = true,
     required this.onTap,
   });
 
@@ -281,7 +288,7 @@ class _SlideListItem extends StatelessWidget {
             ),
 
             // Timp acumulat
-            if (timeMs > 0)
+            if (showTime && timeMs > 0)
               Text(
                 formatMsShort(timeMs),
                 style: TextStyle(
@@ -421,6 +428,20 @@ class SlideMonitorPanel extends StatelessWidget {
                           url:       current.url,
                           bloc:      context.read<ControlBloc>(),
                         ),
+                      ],
+
+                      // ── Cerință #3: monitorizare video (mut, countdown,
+                      // detectare freeze/pauză) — apare doar dacă slide-ul
+                      // curent are o sursă video atașată. ────────────────
+                      if (current.isVideoSlide) ...[
+                        const SizedBox(height: 16),
+                        _PreviewLabel(
+                          label: 'MONITOR VIDEO (MUT)',
+                          color: const Color(0xFFFF3B3B),
+                          icon:  Icons.volume_off_outlined,
+                        ),
+                        const SizedBox(height: 8),
+                        VideoSyncMonitor(slide: current),
                       ],
 
                       const SizedBox(height: 20),
@@ -893,6 +914,9 @@ class _SlideThumbnailContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Același criteriu ca pe Display (SlideRenderer): sursa video are prioritate.
+    if (slide.isVideoSlide) return _VideoThumbnail(slide: slide);
+
     return switch (slide.type) {
       SlideType.intro      => _IntroThumbnail(slide: slide),
       SlideType.transition => _TransitionThumbnail(slide: slide),
@@ -1840,108 +1864,73 @@ class _CrosshairPainter extends CustomPainter {
       o.x != x || o.y != y || o.color != color;
 }
 
+// ── Anunț: EXACT widgetul de pe Display, randat static (fără animații) ──────
+// Astfel miniatura din Control este mereu identică cu ce vede publicul.
 class _AnnounceThumbnail extends StatelessWidget {
   final SlideModel slide;
   const _AnnounceThumbnail({required this.slide});
 
   @override
+  Widget build(BuildContext context) =>
+      SlideAnnounceWidget(slide: slide, animate: false);
+}
+
+// ── Video: placeholder cinematic cu modul de redare ──────────────────────────
+class _VideoThumbnail extends StatelessWidget {
+  final SlideModel slide;
+  const _VideoThumbnail({required this.slide});
+
+  @override
   Widget build(BuildContext context) {
-    final accent = slide.color1 != null
-        ? hexToColor(slide.color1!)
-        : const Color(0xFF6C63FF);
-    final accent2 = slide.color2 != null
-        ? hexToColor(slide.color2!)
-        : const Color(0xFF00D9A3);
+    final loops = slide.loopsForever;
+    final path  = slide.videoPath;
+    final name  = path.isEmpty ? 'video' : path.split('/').last.split('?').first;
 
     return Stack(
       fit: StackFit.expand,
       children: [
-        Container(color: const Color(0xFF04040C)),
         Container(
-          decoration: BoxDecoration(
-            gradient: RadialGradient(
-              center: const Alignment(-0.6, -0.5),
-              radius: 1.2,
-              colors: [accent.withOpacity(0.18), Colors.transparent],
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end:   Alignment.bottomRight,
+              colors: [Color(0xFF15144A), Color(0xFF05050F)],
             ),
           ),
         ),
-        Container(
-          decoration: BoxDecoration(
-            gradient: RadialGradient(
-              center: const Alignment(0.7, 0.6),
-              radius: 1.0,
-              colors: [accent2.withOpacity(0.14), Colors.transparent],
-            ),
-          ),
-        ),
-        Positioned(
-          top: 0, left: 0, right: 0,
-          child: Container(
-            height: 2,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Colors.transparent, accent, accent2, Colors.transparent],
-              ),
-            ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
+        Center(
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                width: 28, height: 28,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: accent.withOpacity(0.12),
-                  border: Border.all(color: accent.withOpacity(0.3)),
-                ),
-                child: const Center(
-                  child: Text('📵', style: TextStyle(fontSize: 13)),
-                ),
+              Icon(
+                loops ? Icons.repeat_rounded : Icons.play_circle_outline_rounded,
+                size: 30,
+                color: Colors.white.withOpacity(0.9),
               ),
               const SizedBox(height: 6),
               Text(
-                slide.heading ?? 'Pentru o vizionare plăcută',
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+                loops ? 'VIDEO · BUCLĂ' : 'VIDEO · 1× → ECRAN NEGRU',
                 style: const TextStyle(
-                  color:      Colors.white,
-                  fontSize:   10,
-                  fontWeight: FontWeight.w700,
-                  height:     1.2,
+                  color:         Color(0xFF00D9A3),
+                  fontSize:      8,
+                  fontWeight:    FontWeight.w800,
+                  letterSpacing: 1.2,
                 ),
               ),
-              const SizedBox(height: 5),
-              ...['📵 Silențios', '🤫 Liniște', '💬 Întrebări la final']
-                  .map((r) => Padding(
-                padding: const EdgeInsets.only(bottom: 2),
-                child: Text(r,
+              const SizedBox(height: 3),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.38),
-                    fontSize: 7,
+                    color:    Colors.white.withOpacity(0.5),
+                    fontSize: 8,
                   ),
                 ),
-              )),
+              ),
             ],
-          ),
-        ),
-        Positioned(
-          bottom: 5, right: 6,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-            decoration: BoxDecoration(
-              color:        const Color(0xFFFF9800).withOpacity(0.15),
-              borderRadius: BorderRadius.circular(3),
-              border: Border.all(color: const Color(0xFFFF9800).withOpacity(0.4)),
-            ),
-            child: const Text('ANUNȚ', style: TextStyle(
-              color: Color(0xFFFF9800), fontSize: 6,
-              fontWeight: FontWeight.w800, letterSpacing: 0.5,
-            )),
           ),
         ),
       ],

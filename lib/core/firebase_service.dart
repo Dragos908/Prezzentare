@@ -10,9 +10,11 @@
 // parametrul URL ?p= (implicit: 'prezentare').
 // Nodurile _global, multi-project și _writeAll au fost eliminate complet.
 
+import 'dart:async' show unawaited;
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'model.dart';
+import 'backup_service.dart';
 
 class FirebaseService {
   FirebaseService._();
@@ -33,6 +35,7 @@ class FirebaseService {
     _initialized = true;
     _currentProject = project;
     _ref = _db.ref(project);
+    BackupService.instance.init(project);
 
     if (!kIsWeb) {
       _db.setPersistenceEnabled(true);
@@ -131,12 +134,39 @@ class FirebaseService {
       _ref.child('overlayEnabled').onValue
           .map((e) => _toBool(e.snapshot.value, fallback: true));
 
+  // ── Vizibilitate cronometru (cerință #1) ──────────────────────────────────
+  Stream<bool> get timerVisibleStream =>
+      _ref.child('timerVisible').onValue
+          .map((e) => _toBool(e.snapshot.value, fallback: true));
+
   Stream<Map<String, dynamic>> get pointerStream =>
       _ref.child('pointer').onValue.map((e) {
         final val = e.snapshot.value;
         if (val == null) return <String, dynamic>{};
         return Map<String, dynamic>.from(val as Map);
       });
+
+  // ── Heartbeat video (cerință #3) ──────────────────────────────────────────
+  // Publicat de DisplayPage la fiecare ~300ms cât timp rulează un slide video.
+  // ControlPage îl citește pentru a oglindi poziția, a detecta freeze/pauză
+  // și a afișa un countdown sincronizat.
+  Stream<Map<String, dynamic>> get videoHeartbeatStream =>
+      _ref.child('videoHeartbeat').onValue.map((e) {
+        final val = e.snapshot.value;
+        if (val == null) return <String, dynamic>{};
+        return Map<String, dynamic>.from(val as Map);
+      });
+
+  Future<void> pushVideoHeartbeat({
+    required double positionSec,
+    required double durationSec,
+    required bool isPlaying,
+  }) => _ref.child('videoHeartbeat').set({
+    'position': positionSec,
+    'duration': durationSec,
+    'playing':  isPlaying,
+    'ts':       DateTime.now().millisecondsSinceEpoch,
+  });
 
   Stream<Map<String, dynamic>> get pointerClickStream =>
       _ref.child('pointerClick').onValue.map((e) {
@@ -195,26 +225,44 @@ class FirebaseService {
       map['slideTimers'] = timers;
       return Transaction.success(map);
     });
+
+    unawaited(BackupService.instance.backupField('currentSlide', idx));
   }
 
-  Future<void> setTouchEnabled(bool val) =>
-      _ref.child('touchEnabled').set(val);
+  Future<void> setTouchEnabled(bool val) {
+    unawaited(BackupService.instance.backupField('touchEnabled', val));
+    return _ref.child('touchEnabled').set(val);
+  }
 
-  Future<void> setVolume(double val) =>
-      _ref.child('volume').set(val.clamp(0.0, 1.0));
+  Future<void> setVolume(double val) {
+    final v = val.clamp(0.0, 1.0);
+    unawaited(BackupService.instance.backupField('volume', v));
+    return _ref.child('volume').set(v);
+  }
 
   Future<void> setTimerRunning(bool val, {int? base}) async {
     final updates = <String, dynamic>{'timerRunning': val};
     if (val) updates['timerStart'] = DateTime.now().millisecondsSinceEpoch;
     if (base != null) updates['timerBase'] = base;
+    unawaited(BackupService.instance.backupField('timerRunning', updates));
     await _ref.update(updates);
   }
 
-  Future<void> setIframePageIndex(int idx) =>
-      _ref.child('iframePageIndex').set(idx < 0 ? 0 : idx);
+  Future<void> setIframePageIndex(int idx) {
+    final v = idx < 0 ? 0 : idx;
+    unawaited(BackupService.instance.backupField('iframePageIndex', v));
+    return _ref.child('iframePageIndex').set(v);
+  }
 
-  Future<void> setOverlayEnabled(bool val) =>
-      _ref.child('overlayEnabled').set(val);
+  Future<void> setOverlayEnabled(bool val) {
+    unawaited(BackupService.instance.backupField('overlayEnabled', val));
+    return _ref.child('overlayEnabled').set(val);
+  }
+
+  Future<void> setTimerVisible(bool val) {
+    unawaited(BackupService.instance.backupField('timerVisible', val));
+    return _ref.child('timerVisible').set(val);
+  }
 
   Future<void> setPointer(double x, double y) =>
       _ref.child('pointer').set({
@@ -245,6 +293,7 @@ class FirebaseService {
 
   Future<void> initSlides(List<SlideModel> slides) async {
     final map = {for (var s in slides) s.id.toString(): s.toMap()};
+    unawaited(BackupService.instance.backupField('slides', map));
     await _ref.child('slides').set(map);
   }
 
@@ -285,6 +334,7 @@ class FirebaseService {
         pointerX:        _toDouble((raw['pointer'] as Map?)?['x'], fallback: 0.5),
         pointerY:        _toDouble((raw['pointer'] as Map?)?['y'], fallback: 0.5),
         pointerActive:   _toBool((raw['pointer'] as Map?)?['active'], fallback: false),
+        timerVisible:    _toBool(raw['timerVisible'], fallback: true),
       );
     } catch (_) {
       return null;

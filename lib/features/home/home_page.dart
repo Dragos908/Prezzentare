@@ -14,64 +14,34 @@ class HomePage extends StatelessWidget {
     return Scaffold(
       backgroundColor: const Color(0xFF06060f),
       body: Center(
-        child: Column(
+        // ── Doar cele 3 butoane principale, fără text/header suplimentar ──
+        child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // ── Logo / titlu ──
-            const Text(
-              'PREZENTARE',
-              style: TextStyle(
-                color:         Colors.white,
-                fontSize:      22,
-                fontWeight:    FontWeight.w800,
-                letterSpacing: 6,
-              ),
+            _ModeCard(
+              icon:  Icons.tv_outlined,
+              label: 'DISPLAY',
+              color: const Color(0xFF00D9A3),
+              onTap: () {
+                try {
+                  web.document.documentElement?.requestFullscreen();
+                } catch (_) {}
+                context.go('/display');
+              },
             ),
-            const SizedBox(height: 6),
-            Text(
-              'Selectează modul de utilizare',
-              style: TextStyle(
-                color:    Colors.white.withOpacity(0.3),
-                fontSize: 13,
-                letterSpacing: 1,
-              ),
+            const SizedBox(width: 32),
+            _ModeCard(
+              icon:  Icons.slideshow_outlined,
+              label: 'VIEWER',
+              color: const Color(0xFFFFBE21),
+              onTap: () => context.go('/viewer'),
             ),
-            const SizedBox(height: 56),
-
-            // ── Butoane ──
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _ModeCard(
-                  icon:        Icons.tv_outlined,
-                  label:       'DISPLAY',
-                  description: 'Ecranul prezentării\npentru tablă / proiector',
-                  color:       const Color(0xFF00D9A3),
-                  onTap:       () {
-                    // Intră în fullscreen înainte de a naviga la /display
-                    try {
-                      web.document.documentElement?.requestFullscreen();
-                    } catch (_) {}
-                    context.go('/display');
-                  },
-                ),
-                const SizedBox(width: 24),
-                _ModeCard(
-                  icon:        Icons.slideshow_outlined,
-                  label:       'VIEWER',
-                  description: 'Vizualizare + control\nsub-slide-uri (telefon)',
-                  color:       const Color(0xFFFFBE21),
-                  onTap:       () => context.go('/viewer'),
-                ),
-                const SizedBox(width: 24),
-                _ModeCard(
-                  icon:        Icons.tune_outlined,
-                  label:       'CONTROL',
-                  description: 'Panoul profesorului\n(necesită parolă)',
-                  color:       const Color(0xFF6C63FF),
-                  onTap:       () => context.go('/control'),
-                ),
-              ],
+            const SizedBox(width: 32),
+            _ModeCard(
+              icon:  Icons.tune_outlined,
+              label: 'CONTROL',
+              color: const Color(0xFF6C63FF),
+              onTap: () => context.go('/control'),
             ),
           ],
         ),
@@ -83,14 +53,12 @@ class HomePage extends StatelessWidget {
 class _ModeCard extends StatefulWidget {
   final IconData icon;
   final String   label;
-  final String   description;
   final Color    color;
   final VoidCallback onTap;
 
   const _ModeCard({
     required this.icon,
     required this.label,
-    required this.description,
     required this.color,
     required this.onTap,
   });
@@ -112,9 +80,9 @@ class _ModeCardState extends State<_ModeCard> {
         onTap: widget.onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
-          width:  200,
-          height: 220,
-          padding: const EdgeInsets.all(28),
+          width:  180,
+          height: 180,
+          padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
             color: _hovered
                 ? widget.color.withOpacity(0.12)
@@ -141,8 +109,8 @@ class _ModeCardState extends State<_ModeCard> {
             children: [
               AnimatedContainer(
                 duration: const Duration(milliseconds: 180),
-                width:  64,
-                height: 64,
+                width:  68,
+                height: 68,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: widget.color.withOpacity(_hovered ? 0.2 : 0.1),
@@ -150,10 +118,10 @@ class _ModeCardState extends State<_ModeCard> {
                 child: Icon(
                   widget.icon,
                   color: widget.color,
-                  size:  28,
+                  size:  30,
                 ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 18),
               Text(
                 widget.label,
                 style: TextStyle(
@@ -161,16 +129,6 @@ class _ModeCardState extends State<_ModeCard> {
                   fontSize:      14,
                   fontWeight:    FontWeight.w800,
                   letterSpacing: 3,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                widget.description,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color:    Colors.white.withOpacity(0.35),
-                  fontSize: 11,
-                  height:   1.5,
                 ),
               ),
             ],

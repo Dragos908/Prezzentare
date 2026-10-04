@@ -28,6 +28,7 @@
 
 import 'dart:async';
 import 'dart:js_interop';
+import '../../../sound/display/display_audio_guard.dart';
 import 'package:web/web.dart' as web;
 import 'dart:ui_web' as ui;
 
@@ -103,6 +104,7 @@ class SlideIframeWidget extends StatefulWidget {
 
 class _SlideIframeWidgetState extends State<SlideIframeWidget> {
   late final String _viewId;
+  EmbedHandle? _embed;
   web.HTMLIFrameElement? _iframeEl;
 
   static final Map<String, _SlideIframeWidgetState> _activeStates  = {};
@@ -159,6 +161,14 @@ class _SlideIframeWidgetState extends State<SlideIframeWidget> {
     _viewId = 'iframe-${widget.slide.id}-${widget.slide.url.hashCode}';
     _activeStates[_viewId] = this;
 
+    // Un iframe extern NU poate fi mutat din afară: îl înregistrăm ca embed
+    // „nemutabil” (apare în raportul de audio și, opțional, poate fi blocat).
+    if (widget.slide.staticImageUrl == null &&
+        (widget.slide.url?.isNotEmpty ?? false)) {
+      _embed = EmbedHandle(label: _viewId, canMute: false);
+      DisplayAudioGuard.instance.registerEmbed(_embed!);
+    }
+
     if (!_registeredIds.contains(_viewId)) {
       _registeredIds.add(_viewId);
       ui.platformViewRegistry.registerViewFactory(_viewId, (_) {
@@ -178,6 +188,8 @@ class _SlideIframeWidgetState extends State<SlideIframeWidget> {
 
   @override
   void dispose() {
+    final e = _embed;
+    if (e != null) DisplayAudioGuard.instance.unregisterEmbed(e);
     if (_activeStates[_viewId] == this) _activeStates.remove(_viewId);
     super.dispose();
   }
@@ -376,17 +388,25 @@ class _SlideIframeWidgetState extends State<SlideIframeWidget> {
       return const _ErrorPlaceholder();
     }
 
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        HtmlElementView(viewType: _viewId),
-        if (widget.overlayEnabled)
-          _NavigationOverlay(
-            touchEnabled: widget.touchEnabled,
-            onNavigate:   _navigate,
-            pageIndex:    widget.iframePageIndex,
-          ),
-      ],
+    final guard = DisplayAudioGuard.instance;
+    return AnimatedBuilder(
+      animation: Listenable.merge(<Listenable>[guard.mutedNotifier, guard.blockUnmutable]),
+      builder: (context, _) {
+        // Setare „Blochează embedurile care nu pot fi mutate”: iframe-ul nici nu se încarcă.
+        if (guard.shouldBlockUnmutableEmbeds) return const _BlockedEmbedPlaceholder();
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            HtmlElementView(viewType: _viewId),
+            if (widget.overlayEnabled)
+              _NavigationOverlay(
+                touchEnabled: widget.touchEnabled,
+                onNavigate:   _navigate,
+                pageIndex:    widget.iframePageIndex,
+              ),
+          ],
+        );
+      },
     );
   }
 }
@@ -442,6 +462,23 @@ class _NavigationOverlay extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+class _BlockedEmbedPlaceholder extends StatelessWidget {
+  const _BlockedEmbedPlaceholder();
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: Colors.black,
+      child: Center(
+        child: Text(
+          'Conținut blocat: sunetul acestui embed nu poate fi garantat mut',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 18),
+        ),
+      ),
     );
   }
 }

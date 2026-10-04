@@ -1,17 +1,33 @@
 // lib/features/display/widgets/double_buffer_widget.dart
 //
-// ── DOUBLE BUFFER + TRANZIȚIE CINEMATICĂ ─────────────────────────────────────
+// ── DOUBLE BUFFER + TRANZIȚII ────────────────────────────────────────────────
 //
-// Tranziția între slide-uri se face în 3 faze suprapuse (total ~700 ms):
+// Slide-ul nou se montează în buffer-ul inactiv, iar tranziția către el depinde
+// de câmpul opțional `transitionIn` al slide-ului (vezi model.dart):
 //
-//   1. FLASH IN   (0–120 ms)  — un line-sweep luminos taie ecranul de la stânga
-//                               la dreapta; simultan slide-ul vechi se dizolvă.
-//   2. HOLD       (120–200 ms)— flash-ul atinge opacitate maximă; noul slide
-//                               intră deja în fundal.
-//   3. FADE OUT   (200–700 ms)— flash-ul dispare lin; noul slide e complet vizibil.
+//   'flash' (implicit) — crossfade + dâră de lumină care taie ecranul (~700 ms):
+//        1. FLASH IN   (0–120 ms)   dâra luminoasă traversează ecranul
+//        2. HOLD       (120–200 ms) flash la opacitate maximă, noul slide intră
+//        3. FADE OUT   (200–700 ms) flash-ul dispare, noul slide e vizibil
 //
-// Efectul net: o tăietură rapidă de lumină care "rulează" ecranul, mai dramatică
-// decât un crossfade simplu dar fără să fie obositoare la utilizare repetată.
+//   'fade'  — crossfade simplu, fără dâră de lumină.
+//
+//   'black' — MUTARE SPRE ECRAN NEGRU (~1 s): imaginea veche se stinge spre
+//             negru, ecranul rămâne complet negru o clipă, iar slide-ul nou
+//             apare din negru. Comutarea buffer-elor se face exact când
+//             ecranul e opac negru, deci nu se vede nicio „săritură”.
+//
+//   'cut'   — schimbare instantanee.
+//
+// ── Video în tranziție ────────────────────────────────────────────────────────
+//   • slide-ul care iese este amuțit imediat (nu se aud două sunete deodată);
+//   • videoclipul care intră se încarcă imediat, dar așteaptă (`hold`) să
+//     devină vizibil, ca imaginea și sunetul să înceapă împreună;
+//   • doar slide-ul curent publică heartbeat-ul video către Control.
+//
+// ── Navigare rapidă ───────────────────────────────────────────────────────────
+// Dacă vine o nouă comandă de slide cât timp rulează o tranziție, ea nu se mai
+// pierde: se reține ultima destinație și se aplică imediat după tranziție.
 //
 // ── PREÎNCĂRCARE IFRAME ───────────────────────────────────────────────────────
 // Toate slide-urile iframe sunt montate cu Offstage(offstage: true) pentru
@@ -23,6 +39,21 @@ import '../../../core/model.dart';
 import 'slide_iframe_widget.dart';
 import '/features/display/display_page.dart';
 
+enum _TransitionMode { flash, fade, black, cut }
+
+_TransitionMode _modeFor(SlideModel next) {
+  switch (next.transitionIn?.trim().toLowerCase()) {
+    case 'fade':
+      return _TransitionMode.fade;
+    case 'black':
+      return _TransitionMode.black;
+    case 'cut':
+      return _TransitionMode.cut;
+    default:
+      return _TransitionMode.flash;
+  }
+}
+
 class DoubleBufferWidget extends StatefulWidget {
   final SlideModel        currentSlide;
   final List<SlideModel>  allSlides;
@@ -31,6 +62,9 @@ class DoubleBufferWidget extends StatefulWidget {
   final bool              overlayEnabled;
   final Duration          transitionDuration;
 
+  /// Volumul 0.0–1.0 pentru slide-urile video (din Control, prin Firebase).
+  final double            volume;
+
   const DoubleBufferWidget({
     required this.currentSlide,
     this.allSlides          = const [],
@@ -38,6 +72,7 @@ class DoubleBufferWidget extends StatefulWidget {
     this.iframePageIndex    = 0,
     this.overlayEnabled     = true,
     this.transitionDuration = const Duration(milliseconds: 700),
+    this.volume             = 1.0,
     super.key,
   });
 
@@ -54,7 +89,18 @@ class _DoubleBufferWidgetState extends State<DoubleBufferWidget>
   bool        _aIsVisible   = true;
   bool        _isTransiting = false;
 
-  // ── Flash / sweep animation ───────────────────────────────────────────────
+  /// Ultimul slide cerut cât timp rula o tranziție — se aplică după ea.
+  SlideModel? _pending;
+
+  /// Tipul tranziției curente / ultimei tranziții.
+  _TransitionMode _mode = _TransitionMode.flash;
+
+  /// Care buffer este cel care INTRĂ (true = A) cât timp rulează tranziția,
+  /// și dacă comutarea vizibilității a avut deja loc.
+  bool? _incomingIsA;
+  bool  _swapped = false;
+
+  // ── Flash / sweep / black animation ───────────────────────────────────────
   late AnimationController _flashCtrl;
 
   // Sweep: 0 → 1 = linia luminoasă se mișcă de la stânga la dreapta
@@ -76,6 +122,9 @@ class _DoubleBufferWidgetState extends State<DoubleBufferWidget>
     Color(0xFFFFBE21),
   ];
   int _flashColorIdx = 0;
+
+  /// Durata tranziției „black” (mai lentă decât flash-ul, ca să se simtă).
+  static const Duration _blackDuration = Duration(milliseconds: 1000);
 
   @override
   void initState() {
@@ -120,35 +169,80 @@ class _DoubleBufferWidgetState extends State<DoubleBufferWidget>
     super.dispose();
   }
 
+  SlideModel? get _visibleSlide => _aIsVisible ? _bufferA : _bufferB;
+
   @override
   void didUpdateWidget(DoubleBufferWidget old) {
     super.didUpdateWidget(old);
-    if (old.currentSlide.id != widget.currentSlide.id && !_isTransiting) {
-      _doTransition(widget.currentSlide);
+    final now = widget.currentSlide;
+
+    // ── Alt slide ────────────────────────────────────────────────────────
+    if (old.currentSlide.id != now.id) {
+      if (_isTransiting) {
+        _pending = now; // nu pierdem comanda: o aplicăm după tranziție
+      } else {
+        _doTransition(now);
+      }
+      return;
+    }
+
+    // ── Același slide, dar conținut modificat live în Firebase ───────────
+    if (old.currentSlide != now && !_isTransiting) {
+      setState(() {
+        if (_aIsVisible) {
+          _bufferA = now;
+        } else {
+          _bufferB = now;
+        }
+      });
     }
   }
 
   void _doTransition(SlideModel next) {
-    _isTransiting  = true;
-    _flashColor    = _flashColors[_flashColorIdx % _flashColors.length];
-    _flashColorIdx = (_flashColorIdx + 1) % _flashColors.length;
+    _isTransiting = true;
+    _mode         = _modeFor(next);
+    _swapped      = false;
+    _incomingIsA  = !_aIsVisible;
+
+    final Duration total = switch (_mode) {
+      _TransitionMode.black => _blackDuration,
+      _TransitionMode.cut   => const Duration(milliseconds: 120),
+      _                     => widget.transitionDuration,
+    };
+    final Duration swapAfter = switch (_mode) {
+      _TransitionMode.black => Duration(milliseconds: total.inMilliseconds ~/ 2),
+      _TransitionMode.cut   => Duration.zero,
+      _                     => const Duration(milliseconds: 80),
+    };
+
+    _flashCtrl.duration = total;
+    _flashCtrl.value    = 0.0;
+
+    if (_mode == _TransitionMode.flash) {
+      _flashColor    = _flashColors[_flashColorIdx % _flashColors.length];
+      _flashColorIdx = (_flashColorIdx + 1) % _flashColors.length;
+    }
 
     // Încarcă noul slide în buffer-ul inactiv
     setState(() {
       if (_aIsVisible) { _bufferB = next; } else { _bufferA = next; }
-      _showFlash = true;
+      _showFlash = _mode == _TransitionMode.flash ||
+          _mode == _TransitionMode.black;
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
 
-      // Comută vizibilitatea (crossfade) puțin după ce flash-ul pornește
-      Future.delayed(const Duration(milliseconds: 80), () {
+      // Comută vizibilitatea (crossfade / la mijlocul „negrului”)
+      Future.delayed(swapAfter, () {
         if (!mounted) return;
-        setState(() => _aIsVisible = !_aIsVisible);
+        setState(() {
+          _aIsVisible = !_aIsVisible;
+          _swapped    = true;
+        });
       });
 
-      // Pornește animația flash
+      // Pornește animația overlay-ului
       _flashCtrl.forward(from: 0).then((_) {
         if (!mounted) return;
         setState(() {
@@ -156,9 +250,36 @@ class _DoubleBufferWidgetState extends State<DoubleBufferWidget>
           if (_aIsVisible) { _bufferB = null; } else { _bufferA = null; }
           _showFlash    = false;
           _isTransiting = false;
+          _incomingIsA  = null;
+          _swapped      = false;
         });
+        _afterTransition();
       });
     });
+  }
+
+  /// Apelată la sfârșitul fiecărei tranziții: aplică o comandă primită între
+  /// timp sau reîmprospătează conținutul slide-ului vizibil.
+  void _afterTransition() {
+    final pending = _pending;
+    _pending = null;
+    final visible = _visibleSlide;
+
+    if (pending != null && (visible == null || pending.id != visible.id)) {
+      _doTransition(pending);
+      return;
+    }
+
+    final latest = widget.currentSlide;
+    if (visible != null && latest.id == visible.id && latest != visible) {
+      setState(() {
+        if (_aIsVisible) {
+          _bufferA = latest;
+        } else {
+          _bufferB = latest;
+        }
+      });
+    }
   }
 
   Set<int> get _activeBufferIds {
@@ -168,12 +289,50 @@ class _DoubleBufferWidgetState extends State<DoubleBufferWidget>
     return ids;
   }
 
+  // ── Stare per buffer (în timpul tranziției) ───────────────────────────────
+  bool _isOutgoing(bool bufferIsA) =>
+      _incomingIsA != null && _incomingIsA != bufferIsA;
+
+  bool _isHeld(bool bufferIsA) => _incomingIsA == bufferIsA && !_swapped;
+
+  /// Opacitatea overlay-ului negru la momentul t (0..1) al tranziției „black”:
+  /// 0→1 (0–42%), negru complet (42–58%), 1→0 (58–100%).
+  static double _blackOpacityAt(double t) {
+    if (t < 0.42) return Curves.easeIn.transform(t / 0.42);
+    if (t <= 0.58) return 1.0;
+    return 1.0 - Curves.easeOut.transform((t - 0.58) / 0.42);
+  }
+
+  Widget _buffer(SlideModel? slide, bool isA) {
+    if (slide == null) return const SizedBox.expand();
+    return RepaintBoundary(
+      child: SlideRenderer(
+        slide:            slide,
+        touchEnabled:     widget.touchEnabled,
+        iframePageIndex:  widget.iframePageIndex,
+        overlayEnabled:   widget.overlayEnabled,
+        volume:           _isOutgoing(isA) ? 0.0 : widget.volume,
+        hold:             _isHeld(isA),
+        publishHeartbeat: !_isOutgoing(isA),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final activeIds    = _activeBufferIds;
+    final activeIds     = _activeBufferIds;
     final preloadSlides = widget.allSlides
-        .where((s) => s.type == SlideType.iframe && !activeIds.contains(s.id))
+        .where((s) =>
+            s.type == SlideType.iframe &&
+            !s.isVideoSlide &&
+            !activeIds.contains(s.id))
         .toList();
+
+    // „black” și „cut” comută buffer-ele instantaneu (sub negru / fără efect).
+    final Duration bufferFade =
+        (_mode == _TransitionMode.black || _mode == _TransitionMode.cut)
+            ? Duration.zero
+            : widget.transitionDuration;
 
     return Stack(
       fit: StackFit.expand,
@@ -195,49 +354,42 @@ class _DoubleBufferWidgetState extends State<DoubleBufferWidget>
         // ── Buffer A ──────────────────────────────────────────────────────────
         AnimatedOpacity(
           opacity:  _aIsVisible ? 1.0 : 0.0,
-          duration: widget.transitionDuration,
+          duration: bufferFade,
           curve:    Curves.easeInOut,
-          child: _bufferA != null
-              ? RepaintBoundary(
-            child: SlideRenderer(
-              slide:           _bufferA!,
-              touchEnabled:    widget.touchEnabled,
-              iframePageIndex: widget.iframePageIndex,
-              overlayEnabled:  widget.overlayEnabled,
-            ),
-          )
-              : const SizedBox.expand(),
+          child:    _buffer(_bufferA, true),
         ),
 
         // ── Buffer B ──────────────────────────────────────────────────────────
         AnimatedOpacity(
           opacity:  _aIsVisible ? 0.0 : 1.0,
-          duration: widget.transitionDuration,
+          duration: bufferFade,
           curve:    Curves.easeInOut,
-          child: _bufferB != null
-              ? RepaintBoundary(
-            child: SlideRenderer(
-              slide:           _bufferB!,
-              touchEnabled:    widget.touchEnabled,
-              iframePageIndex: widget.iframePageIndex,
-              overlayEnabled:  widget.overlayEnabled,
-            ),
-          )
-              : const SizedBox.expand(),
+          child:    _buffer(_bufferB, false),
         ),
 
-        // ── Flash / sweep overlay ─────────────────────────────────────────────
+        // ── Overlay: dâră de lumină (flash) sau negru (black) ─────────────────
         if (_showFlash)
           AnimatedBuilder(
             animation: _flashCtrl,
-            builder: (_, __) => CustomPaint(
-              painter: _SweepFlashPainter(
-                sweep:   _sweepAnim.value,
-                opacity: _flashOpacity.value,
-                color:   _flashColor,
-              ),
-              child: const SizedBox.expand(),
-            ),
+            builder: (_, __) {
+              if (_mode == _TransitionMode.black) {
+                return IgnorePointer(
+                  child: ColoredBox(
+                    color: Colors.black
+                        .withOpacity(_blackOpacityAt(_flashCtrl.value)),
+                    child: const SizedBox.expand(),
+                  ),
+                );
+              }
+              return CustomPaint(
+                painter: _SweepFlashPainter(
+                  sweep:   _sweepAnim.value,
+                  opacity: _flashOpacity.value,
+                  color:   _flashColor,
+                ),
+                child: const SizedBox.expand(),
+              );
+            },
           ),
       ],
     );

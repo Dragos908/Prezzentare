@@ -17,6 +17,9 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:video_player/video_player.dart';
+import '../../sound/display/display_sound_system.dart';
+import '../../sound/display/sync_video_overlay.dart';
 import 'package:web/web.dart' as web;
 import '../../core/firebase_service.dart';
 import '../../core/model.dart';
@@ -26,6 +29,7 @@ import 'widgets/slide_transition_widget.dart';
 import 'widgets/slide_iframe_widget.dart';
 import 'widgets/slide_end_widget.dart';
 import 'widgets/slide_announce_widget.dart';
+import 'widgets/hybrid_video_widget.dart';
 
 class DisplayPage extends StatefulWidget {
   const DisplayPage({super.key});
@@ -49,10 +53,14 @@ class _DisplayPageState extends State<DisplayPage> {
   late final StreamSubscription<Map<String, dynamic>> _pointerSub;
   late final StreamSubscription<Map<String, dynamic>> _clickSub;
 
+  /// Sunet: guard de mut + ceas comun + follower de sincronizare (overlay video).
+  final DisplaySoundSystem _sound = DisplaySoundSystem();
+
   @override
   void initState() {
     super.initState();
     final fb = FirebaseService.instance;
+    unawaited(_sound.start());
 
     _indexSub = fb.currentSlideStream.listen((idx) {
       if (mounted) setState(() => _state = _state.copyWith(currentSlide: idx));
@@ -109,6 +117,7 @@ class _DisplayPageState extends State<DisplayPage> {
     _overlaySub.cancel();
     _pointerSub.cancel();
     _clickSub.cancel();
+    unawaited(_sound.dispose());
     super.dispose();
   }
 
@@ -146,7 +155,11 @@ class _DisplayPageState extends State<DisplayPage> {
             touchEnabled:    _state.touchEnabled,
             iframePageIndex: _state.iframePageIndex,
             overlayEnabled:  _state.overlayEnabled,
+            volume:          _state.volume,
           ),
+          // Imaginea sunetelor video, pe tot ecranul, deasupra conținutului.
+          // Nu schimbă ruta / starea slide-ului de dedesubt; mută mereu.
+          SyncVideoOverlay(follower: _sound.follower, flash: _sound.calibrationFlash),
           if (_state.pointerActive)
             _LaserPointerOverlay(x: _state.pointerX, y: _state.pointerY),
         ],
@@ -248,16 +261,46 @@ class SlideRenderer extends StatelessWidget {
   final int  iframePageIndex;
   final bool overlayEnabled;
 
+  /// Volumul 0.0–1.0 pentru slide-urile video (din Control, prin Firebase).
+  final double volume;
+
+  /// True → videoclipul se redă fără sunet (ex: pagina Viewer).
+  final bool muted;
+
+  /// True → videoclipul se încarcă, dar așteaptă să pornească (DoubleBuffer).
+  final bool hold;
+
+  /// False → nu publică heartbeat-ul video în Firebase. Îl publică DOAR
+  /// Display-ul, altfel Viewer-ele ar suprascrie poziția reală.
+  final bool publishHeartbeat;
+
   const SlideRenderer({
     required this.slide,
     required this.touchEnabled,
-    this.iframePageIndex = 0,
-    this.overlayEnabled  = true,
+    this.iframePageIndex  = 0,
+    this.overlayEnabled   = true,
+    this.volume           = 1.0,
+    this.muted            = false,
+    this.hold             = false,
+    this.publishHeartbeat = true,
     super.key,
   });
 
   @override
   Widget build(BuildContext context) {
+    // ── Cerință #2/#3: dacă slide-ul are sursă video (URL din DB sau
+    // fișier local), îl redăm cu HybridVideoWidget și trimitem heartbeat
+    // pentru sincronizarea panoului de control, indiferent de SlideType. ──
+    if (slide.isVideoSlide) {
+      return _VideoSlideWithHeartbeat(
+        slide:            slide,
+        volume:           volume,
+        muted:            muted,
+        hold:             hold,
+        publishHeartbeat: publishHeartbeat,
+      );
+    }
+
     return switch (slide.type) {
       SlideType.intro      => SlideIntroWidget(slide: slide),
       SlideType.transition => SlideTransitionWidget(slide: slide),
@@ -270,5 +313,75 @@ class SlideRenderer extends StatelessWidget {
       SlideType.end        => SlideEndWidget(slide: slide),
       SlideType.announce   => SlideAnnounceWidget(slide: slide),
     };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _VideoSlideWithHeartbeat — redă videoclipul (sonor, pe ecranul principal)
+// și publică poziția/starea la fiecare ~300ms pentru panoul de control.
+// ─────────────────────────────────────────────────────────────────────────────
+class _VideoSlideWithHeartbeat extends StatefulWidget {
+  final SlideModel slide;
+  final double     volume;
+  final bool       muted;
+  final bool       hold;
+  final bool       publishHeartbeat;
+
+  const _VideoSlideWithHeartbeat({
+    required this.slide,
+    required this.volume,
+    required this.muted,
+    required this.hold,
+    required this.publishHeartbeat,
+  });
+
+  @override
+  State<_VideoSlideWithHeartbeat> createState() =>
+      _VideoSlideWithHeartbeatState();
+}
+
+class _VideoSlideWithHeartbeatState extends State<_VideoSlideWithHeartbeat> {
+  Timer? _heartbeatTimer;
+
+  /// Controllerul activ (null cât timp se încarcă / după eliberare / la eroare).
+  VideoPlayerController? _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _heartbeatTimer =
+        Timer.periodic(const Duration(milliseconds: 300), (_) => _beat());
+  }
+
+  /// Publică poziția/starea. Se oprește singur dacă videoclipul are eroare —
+  /// astfel panoul de Control observă că Display-ul nu mai transmite.
+  void _beat() {
+    final ctrl = _ctrl;
+    if (ctrl == null || !widget.publishHeartbeat || widget.hold) return;
+    final v = ctrl.value;
+    if (!v.isInitialized || v.hasError) return;
+    FirebaseService.instance.pushVideoHeartbeat(
+      positionSec: v.position.inMilliseconds / 1000,
+      durationSec: v.duration.inMilliseconds / 1000,
+      isPlaying:   v.isPlaying,
+    );
+  }
+
+  @override
+  void dispose() {
+    _heartbeatTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return HybridVideoWidget(
+      slide:  widget.slide,
+      muted:  widget.muted, // Display: cu sunet · Viewer: mut
+      volume: widget.volume,
+      hold:   widget.hold,
+      onControllerReady:    (ctrl) => _ctrl = ctrl,
+      onControllerReleased: () => _ctrl = null,
+    );
   }
 }

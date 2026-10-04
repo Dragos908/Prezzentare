@@ -29,6 +29,7 @@ class _SlideTimersUpdated  extends ControlEvent { final Map<int, SlideTimerData>
 class _IframePageUpdated   extends ControlEvent { final int page;                        _IframePageUpdated(this.page); }
 class _OverlayUpdated      extends ControlEvent { final bool enabled;                    _OverlayUpdated(this.enabled); }
 class _PointerUpdated      extends ControlEvent { final double x, y; final bool active;  _PointerUpdated(this.x, this.y, this.active); }
+class _TimerVisibleUpdated extends ControlEvent { final bool visible;                    _TimerVisibleUpdated(this.visible); }
 
 // ─────────────────────────────────────────────────────────────────────────────
 class ControlBloc extends Bloc<ControlEvent, PresentationState> {
@@ -46,6 +47,7 @@ class ControlBloc extends Bloc<ControlEvent, PresentationState> {
   late final StreamSubscription<int>                      _iframePageSub;
   late final StreamSubscription<bool>                     _overlaySub;
   late final StreamSubscription<Map<String, dynamic>>     _pointerSub;
+  late final StreamSubscription<bool>                     _timerVisibleSub;
 
   ControlBloc(this._fb) : super(_fb.cachedState ?? const PresentationState()) {
 
@@ -62,6 +64,7 @@ class ControlBloc extends Bloc<ControlEvent, PresentationState> {
     on<_OverlayUpdated>     ((e, emit) => emit(state.copyWith(overlayEnabled: e.enabled)));
     on<_PointerUpdated>     ((e, emit) => emit(state.copyWith(
         pointerX: e.x, pointerY: e.y, pointerActive: e.active)));
+    on<_TimerVisibleUpdated>((e, emit) => emit(state.copyWith(timerVisible: e.visible)));
 
     // ── Handlere pentru evenimente publice ────────────────────────────────
     on<NavigateEvent>        (_onNavigate);
@@ -77,6 +80,7 @@ class ControlBloc extends Bloc<ControlEvent, PresentationState> {
     on<SetPointerEvent>      (_onSetPointer);
     on<ClearPointerEvent>    (_onClearPointer);
     on<SetPointerClickEvent> (_onSetPointerClick);
+    on<ToggleTimerVisibleEvent>(_onToggleTimerVisible);
 
     // ── Subscripții Firebase ──────────────────────────────────────────────
     _indexSub        = _fb.currentSlideStream   .listen((i) => add(_SlideIndexUpdated(i)));
@@ -95,6 +99,7 @@ class ControlBloc extends Bloc<ControlEvent, PresentationState> {
       final active = m['active'] == true || m['active'] == 1;
       add(_PointerUpdated(x, y, active));
     });
+    _timerVisibleSub = _fb.timerVisibleStream.listen((v) => add(_TimerVisibleUpdated(v)));
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -198,6 +203,10 @@ class ControlBloc extends Bloc<ControlEvent, PresentationState> {
       SetPointerClickEvent e, Emitter<PresentationState> emit) async =>
       _fb.setPointerClick(e.x, e.y);
 
+  Future<void> _onToggleTimerVisible(
+      ToggleTimerVisibleEvent e, Emitter<PresentationState> emit) async =>
+      _fb.setTimerVisible(!state.timerVisible);
+
   @override
   Future<void> close() {
     _indexSub.cancel();
@@ -211,6 +220,7 @@ class ControlBloc extends Bloc<ControlEvent, PresentationState> {
     _iframePageSub.cancel();
     _overlaySub.cancel();
     _pointerSub.cancel();
+    _timerVisibleSub.cancel();
     return super.close();
   }
 }

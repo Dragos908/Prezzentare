@@ -48,6 +48,12 @@ class IframeResetPageEvent extends ControlEvent {}
 /// Activează / dezactivează overlay-ul de navigare pe iframe.
 class ToggleOverlayEvent extends ControlEvent {}
 
+// ── Vizibilitate cronometru ────────────────────────────────────────────────
+
+/// Arată / ascunde complet cronometrul general din UI-ul de Control
+/// (chip bara de sus, secțiunea „Cronometre", timp acumulat per slide).
+class ToggleTimerVisibleEvent extends ControlEvent {}
+
 // ── Pointer laser ─────────────────────────────────────────────────────────────
 
 /// Trimite poziția pointer-ului pe Display (coordonate normalizate 0.0–1.0).

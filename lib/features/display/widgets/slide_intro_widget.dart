@@ -4,6 +4,7 @@ import 'package:web/web.dart' as web;
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:prezentare_interactiva/core/model.dart';
+import '../../../sound/display/display_audio_guard.dart';
 
 
 // 1. Declarăm Widget-ul principal
@@ -22,6 +23,7 @@ class _SlideIntroWidgetState extends State<SlideIntroWidget> {
   static int _idCounter = 0;
   String? _viewId;
   String? _videoId;
+  EmbedHandle? _embed;
 
   @override
   void initState() {
@@ -57,6 +59,11 @@ class _SlideIntroWidgetState extends State<SlideIntroWidget> {
           firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 
           var player;
+          // Mut garantat prin API-ul YouTube: pornește cu mute=1 și un watchdog
+          // re-mută playerul dacă ar apărea sunet (pagina nu are niciun UI de un-mute).
+          setInterval(function() {
+            try { if (player && player.isMuted && !player.isMuted()) player.mute(); } catch (e) {}
+          }, 1000);
           function onYouTubeIframeAPIReady() {
             player = new YT.Player('player', {
               videoId: '$vid',
@@ -75,6 +82,9 @@ class _SlideIntroWidgetState extends State<SlideIntroWidget> {
       </html>
       ''';
 
+      _embed = const EmbedHandle(label: 'youtube-intro', canMute: true);
+      DisplayAudioGuard.instance.registerEmbed(_embed!);
+
       ui.platformViewRegistry.registerViewFactory(_viewId!, (_) {
         final el = web.HTMLIFrameElement()
           ..srcdoc              = htmlContent.toJS
@@ -88,6 +98,13 @@ class _SlideIntroWidgetState extends State<SlideIntroWidget> {
         return el;
       });
     }
+  }
+
+  @override
+  void dispose() {
+    final e = _embed;
+    if (e != null) DisplayAudioGuard.instance.unregisterEmbed(e);
+    super.dispose();
   }
 
   @override

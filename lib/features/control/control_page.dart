@@ -13,12 +13,27 @@
 //  Shift + →              — pagina ANTERIOARĂ în iframe (direcție inversă)
 //  Shift + ←              — pagina URMĂTOARE  în iframe (direcție inversă)
 //  A                      — salt rapid la slide-ul de ANUNȚ
+//
+//  SUNET (configurabile în Setări → Sunet & fade; implicit):
+//  Esc                    — OPREȘTE TOT (instant)
+//  F                      — fade-out la toate sunetele care rulează
+//  L                      — fade la nivel (toate)
+//  N / B                  — sunetul următor / anterior   (B, nu P: P e cronometrul)
+//  Z                      — restart sunetul curent
 // ─────────────────────────────────────────────────────────────────────────────
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../core/model.dart';
+import '../../core/theme/app_tokens.dart';
+import '../../sound/audio/control_sound_system.dart';
+import '../../sound/ui/sound_dock.dart';
+import '../../sound/ui/sound_shortcuts.dart';
+import '../settings/settings_page.dart';
+import 'widgets/sound_status_pills.dart';
 import 'bloc/control_bloc.dart';
 import 'bloc/control_event.dart';
 import 'widgets/slide_panels.dart';
@@ -48,9 +63,17 @@ class _ControlViewState extends State<_ControlView> {
   final _focusNode = FocusNode();
   bool _pointerMode = false;
 
+  /// Sunetul (control = singura sursă de sunet) — pornit o singură dată pe sesiune.
+  final ControlSoundSystem _sound = ControlSoundSystem.instance;
+  late final SoundShortcuts _soundKeys = SoundShortcuts(
+    coordinator: _sound.coordinator,
+    settings: () => _sound.settings.value,
+  );
+
   @override
   void initState() {
     super.initState();
+    unawaited(_sound.start());
     WidgetsBinding.instance
         .addPostFrameCallback((_) => _focusNode.requestFocus());
   }
@@ -64,6 +87,9 @@ class _ControlViewState extends State<_ControlView> {
   void _handleKey(
       KeyEvent event, ControlBloc bloc, PresentationState state) {
     if (event is! KeyDownEvent) return;
+
+    // scurtăturile de SUNET (Esc, F, L, N, B, Z — configurabile) au prioritate
+    if (_soundKeys.handle(event)) return;
 
     final key      = event.logicalKey;
     final isShift  = HardwareKeyboard.instance.isShiftPressed;
@@ -180,37 +206,127 @@ class _ControlViewState extends State<_ControlView> {
               },
               onAnnounce: () => _jumpToAnnounce(state, bloc),
             ),
-            body: Stack(
-              fit: StackFit.expand,
+            body: Column(
               children: [
-                Row(
-                  children: [
-                    // ── Stânga: Presenter View ──
-                    const SizedBox(
-                      width: 300,
-                      child: SlideMonitorPanel(),
-                    ),
-                    // ── Centru: Comenzi ──
-                    Expanded(child: _CenterPanel()),
-                    // ── Dreapta: Listă slide-uri ──
-                    const SizedBox(
-                      width: 200,
-                      child: SlideListPanel(),
-                    ),
-                  ],
-                ),
-                // ── Ecran Pointer Laser (overlay fullscreen) ──
-                if (_pointerMode)
-                  _PointerScreen(
-                    bloc:   bloc,
-                    onExit: () {
-                      bloc.add(ClearPointerEvent());
-                      setState(() => _pointerMode = false);
-                    },
+                Expanded(
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      // ── Zona principală (responsive: 3 coloane / panou unic) ──
+                      const _ResponsiveBody(),
+                      // ── Ecran Pointer Laser (overlay peste zona principală) ──
+                      if (_pointerMode)
+                        _PointerScreen(
+                          bloc:   bloc,
+                          onExit: () {
+                            bloc.add(ClearPointerEvent());
+                            setState(() => _pointerMode = false);
+                          },
+                        ),
+                    ],
                   ),
+                ),
+                // ── Dock „Sunet”: fix, pliabil, mereu vizibil jos ──
+                // După orice gest în dock, focusul revine la pagină, ca
+                // scurtăturile de tastatură să continue să meargă.
+                Listener(
+                  onPointerUp: (_) => _focusNode.requestFocus(),
+                  child: FocusTraversalGroup(
+                    child: SoundDock(
+                      coordinator: _sound.coordinator,
+                      library:     _sound.library,
+                      engine:      _sound.engine,
+                      settings:    _sound.settings,
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
+        );
+      },
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Zona principală — responsive, fără dimensiuni fixe
+//   ≥ 1000 px : 3 coloane proporționale (monitor · comenzi · listă slide-uri)
+//   < 1000 px : un singur panou, la alegere (tabletă / telefon), fiecare cu
+//               toată lățimea; panourile rămân montate (starea se păstrează)
+// ─────────────────────────────────────────────────────────────────────────────
+class _ResponsiveBody extends StatefulWidget {
+  const _ResponsiveBody();
+
+  @override
+  State<_ResponsiveBody> createState() => _ResponsiveBodyState();
+}
+
+class _ResponsiveBodyState extends State<_ResponsiveBody> {
+  int _pane = 1; // 0 monitor · 1 comenzi · 2 slide-uri
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, c) {
+        final w = c.maxWidth;
+        if (w >= 1000) {
+          final left  = (w * 0.24).clamp(260.0, 340.0).toDouble();
+          final right = (w * 0.17).clamp(180.0, 260.0).toDouble();
+          return Row(
+            children: [
+              // ── Stânga: Presenter View ──
+              SizedBox(width: left, child: const SlideMonitorPanel()),
+              // ── Centru: Comenzi ──
+              Expanded(child: _CenterPanel()),
+              // ── Dreapta: Listă slide-uri ──
+              SizedBox(width: right, child: const SlideListPanel()),
+            ],
+          );
+        }
+        final t = context.tk;
+        return Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+              child: SizedBox(
+                width: double.infinity,
+                child: SegmentedButton<int>(
+                  showSelectedIcon: false,
+                  style: SegmentedButton.styleFrom(
+                    minimumSize: const Size(0, 48),
+                    foregroundColor: t.textMid,
+                  ),
+                  segments: const [
+                    ButtonSegment(
+                        value: 0,
+                        icon: Icon(Icons.monitor_rounded),
+                        label: Text('Monitor')),
+                    ButtonSegment(
+                        value: 1,
+                        icon: Icon(Icons.tune_rounded),
+                        label: Text('Comenzi')),
+                    ButtonSegment(
+                        value: 2,
+                        icon: Icon(Icons.view_list_rounded),
+                        label: Text('Slide-uri')),
+                  ],
+                  selected: <int>{_pane},
+                  onSelectionChanged: (s) => setState(() => _pane = s.first),
+                ),
+              ),
+            ),
+            Expanded(
+              child: IndexedStack(
+                index: _pane,
+                children: [
+                  const SlideMonitorPanel(),
+                  _CenterPanel(),
+                  const SlideListPanel(),
+                ],
+              ),
+            ),
+          ],
         );
       },
     );
@@ -236,7 +352,7 @@ class _ControlAppBar extends StatelessWidget implements PreferredSizeWidget {
   });
 
   @override
-  Size get preferredSize => const Size.fromHeight(52);
+  Size get preferredSize => const Size.fromHeight(56);
 
   @override
   Widget build(BuildContext context) {
@@ -258,10 +374,11 @@ class _ControlAppBar extends StatelessWidget implements PreferredSizeWidget {
       backgroundColor: const Color(0xFF0b0b16),
       elevation: 0,
       titleSpacing: 0,
-      title: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        child: Row(
-          children: [
+      title: LayoutBuilder(builder: (context, constraints) {
+        // Pe ecrane înguste ascundem scurtăturile și bara devine derulabilă
+        // orizontal (fără overflow).
+        final wide = constraints.maxWidth >= 1100;
+        final items = <Widget>[
             const Text(
               'CONTROL',
               style: TextStyle(
@@ -272,20 +389,22 @@ class _ControlAppBar extends StatelessWidget implements PreferredSizeWidget {
               ),
             ),
             const SizedBox(width: 16),
-            _ShortcutBadge('← →', isIframe ? 'iframe' : 'slide'),
-            const SizedBox(width: 6),
-            _ShortcutBadge('T', 'touch'),
-            const SizedBox(width: 6),
-            _ShortcutBadge('O', 'overlay'),
-            const SizedBox(width: 6),
-            _ShortcutBadge('P', 'timer'),
-            const SizedBox(width: 6),
-            _ShortcutBadge('R', 'reset'),
-            if (isIframe) ...[
+            if (wide) ...[
+              _ShortcutBadge('← →', isIframe ? 'iframe' : 'slide'),
               const SizedBox(width: 6),
-              _ShortcutBadge('⇧ ← →', 'iframe ↩'),
+              _ShortcutBadge('T', 'touch'),
+              const SizedBox(width: 6),
+              _ShortcutBadge('O', 'overlay'),
+              const SizedBox(width: 6),
+              _ShortcutBadge('P', 'timer'),
+              const SizedBox(width: 6),
+              _ShortcutBadge('R', 'reset'),
+              if (isIframe) ...[
+                const SizedBox(width: 6),
+                _ShortcutBadge('⇧ ← →', 'iframe ↩'),
+              ],
             ],
-            const Spacer(),
+            if (wide) const Spacer() else const SizedBox(width: 16),
 
             // ── Buton ANUNȚ ───────────────────────────────────────────────
             if (hasAnnounce) ...[
@@ -385,51 +504,80 @@ class _ControlAppBar extends StatelessWidget implements PreferredSizeWidget {
               ),
               const SizedBox(width: 10),
             ],
-            GestureDetector(
-              onTap: () => bloc.add(TimerToggleEvent()),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 14, vertical: 7),
-                decoration: BoxDecoration(
-                  color: state.timerRunning
-                      ? const Color(0xFF6C63FF).withOpacity(0.15)
-                      : Colors.white.withOpacity(0.04),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
+            // ── Chip cronometru (cerință #1: complet ascuns dacă !timerVisible) ──
+            if (state.timerVisible) ...[
+              GestureDetector(
+                onTap: () => bloc.add(TimerToggleEvent()),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 7),
+                  decoration: BoxDecoration(
                     color: state.timerRunning
-                        ? const Color(0xFF6C63FF).withOpacity(0.5)
-                        : Colors.white.withOpacity(0.08),
+                        ? const Color(0xFF6C63FF).withOpacity(0.15)
+                        : Colors.white.withOpacity(0.04),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: state.timerRunning
+                          ? const Color(0xFF6C63FF).withOpacity(0.5)
+                          : Colors.white.withOpacity(0.08),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (state.timerRunning) ...[
+                        _PulseDot(),
+                        const SizedBox(width: 8),
+                      ],
+                      Text(
+                        formatMs(state.timerTotalMs),
+                        style: TextStyle(
+                          color:         state.timerRunning
+                              ? Colors.white
+                              : Colors.white38,
+                          fontSize:      15,
+                          fontFamily:    'monospace',
+                          fontWeight:    FontWeight.w700,
+                          letterSpacing: 2,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (state.timerRunning) ...[
-                      _PulseDot(),
-                      const SizedBox(width: 8),
-                    ],
-                    Text(
-                      formatMs(state.timerTotalMs),
-                      style: TextStyle(
-                        color:         state.timerRunning
-                            ? Colors.white
-                            : Colors.white38,
-                        fontSize:      15,
-                        fontFamily:    'monospace',
-                        fontWeight:    FontWeight.w700,
-                        letterSpacing: 2,
-                      ),
-                    ),
-                  ],
+              ),
+              const SizedBox(width: 10),
+            ],
+            // ── Stare display / sincronizare / sunet display ──────────────
+            const SoundStatusPills(),
+            const SizedBox(width: 10),
+            // ── Setări (pagină separată) ──────────────────────────────────
+            AppIconButton(
+              icon: Icons.settings_rounded,
+              tooltip: 'Setări',
+              size: 44,
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => BlocProvider.value(
+                    value: bloc,
+                    child: const SettingsPage(),
+                  ),
                 ),
               ),
             ),
             const SizedBox(width: 10),
             _StatusDot(label: 'Firebase', active: true),
-          ],
-        ),
-      ),
+        ];
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: wide
+              ? Row(children: items)
+              : SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(children: items),
+                ),
+        );
+      }),
       bottom: PreferredSize(
         preferredSize: const Size.fromHeight(1),
         child: Container(
@@ -690,6 +838,8 @@ class _CenterPanel extends StatelessWidget {
                       TouchToggleWidget(),
                       SizedBox(height: 8),
                       OverlayToggleWidget(),
+                      SizedBox(height: 8),
+                      TimerVisibilityToggleWidget(),
                       SizedBox(height: 8),
                       VolumeControlWidget(),
                     ],
