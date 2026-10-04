@@ -1,0 +1,1165 @@
+// lib/features/control/control_page.dart
+//
+// ── SHORTCUTS TASTATURĂ ──────────────────────────────────────────────────────
+//  → / PageDown           — slide următor  (dacă ești pe iframe: pagina următoare)
+//  ← / PageUp             — slide anterior (dacă ești pe iframe: pagina anterioară)
+//  Space                  — slide următor (întotdeauna)
+//  Home                   — primul slide / prima pagină iframe
+//  End                    — ultimul slide
+//  T                      — toggle Touch
+//  O                      — toggle Overlay navigare iframe
+//  P / Enter              — Play/Pause cronometru
+//  R                      — Reset cronometru
+//  Shift + →              — pagina ANTERIOARĂ în iframe (direcție inversă)
+//  Shift + ←              — pagina URMĂTOARE  în iframe (direcție inversă)
+//  A                      — salt rapid la slide-ul de ANUNȚ
+//
+//  SUNET (configurabile în Setări → Sunet & fade; implicit):
+//  Esc                    — OPREȘTE TOT (instant)
+//  F                      — fade-out la toate sunetele care rulează
+//  L                      — fade la nivel (toate)
+//  N / B                  — sunetul următor / anterior   (B, nu P: P e cronometrul)
+//  Z                      — restart sunetul curent
+// ─────────────────────────────────────────────────────────────────────────────
+
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../core/model.dart';
+import '../../core/theme/app_tokens.dart';
+import '../../sound/audio/control_sound_system.dart';
+import '../../sound/ui/sound_dock.dart';
+import '../../sound/ui/sound_shortcuts.dart';
+import '../settings/settings_page.dart';
+import 'widgets/sound_status_pills.dart';
+import 'bloc/control_bloc.dart';
+import 'bloc/control_event.dart';
+import 'widgets/slide_panels.dart';
+import 'widgets/navigation_panel.dart';
+import 'widgets/control_widgets.dart';
+
+class ControlPage extends StatelessWidget {
+  const ControlPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const _ControlView();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _ControlView
+// ─────────────────────────────────────────────────────────────────────────────
+class _ControlView extends StatefulWidget {
+  const _ControlView();
+
+  @override
+  State<_ControlView> createState() => _ControlViewState();
+}
+
+class _ControlViewState extends State<_ControlView> {
+  final _focusNode = FocusNode();
+  bool _pointerMode = false;
+
+  /// Sunetul (control = singura sursă de sunet) — pornit o singură dată pe sesiune.
+  final ControlSoundSystem _sound = ControlSoundSystem.instance;
+  late final SoundShortcuts _soundKeys = SoundShortcuts(
+    coordinator: _sound.coordinator,
+    settings: () => _sound.settings.value,
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_sound.start());
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _focusNode.requestFocus());
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _handleKey(
+      KeyEvent event, ControlBloc bloc, PresentationState state) {
+    if (event is! KeyDownEvent) return;
+
+    // scurtăturile de SUNET (Esc, F, L, N, B, Z — configurabile) au prioritate
+    if (_soundKeys.handle(event)) return;
+
+    final key      = event.logicalKey;
+    final isShift  = HardwareKeyboard.instance.isShiftPressed;
+    final isIframe = state.slides.isNotEmpty &&
+        state.slides[state.currentSlide.clamp(0, state.slides.length - 1)]
+            .type ==
+            SlideType.iframe;
+
+    // ── ⇧ + ← →: pagina iframe în direcție INVERSĂ ───────────────────────
+    if (isShift) {
+      if (key == LogicalKeyboardKey.arrowRight) {
+        // invers: → merge la pagina ANTERIOARĂ
+        if (isIframe) bloc.add(IframeNavigateEvent(false));
+        return;
+      }
+      if (key == LogicalKeyboardKey.arrowLeft) {
+        // invers: ← merge la pagina URMĂTOARE
+        if (isIframe) bloc.add(IframeNavigateEvent(true));
+        return;
+      }
+      // Shift + Home / End rămân pentru navigare slide-uri
+      if (key == LogicalKeyboardKey.home) {
+        bloc.add(GoToFirstEvent());
+        return;
+      }
+      if (key == LogicalKeyboardKey.end) {
+        if (state.slides.isNotEmpty) {
+          bloc.add(NavigateEvent(state.slides.length - 1));
+        }
+        return;
+      }
+    }
+
+    // ── ← → / PageDown/Up: slide SAU pagina iframe (dacă ești pe iframe) ─
+    if (key == LogicalKeyboardKey.arrowRight ||
+        key == LogicalKeyboardKey.pageDown) {
+      if (isIframe) {
+        bloc.add(IframeNavigateEvent(true));
+      } else {
+        bloc.add(NavigateRelativeEvent(true));
+      }
+      return;
+    }
+    if (key == LogicalKeyboardKey.arrowLeft ||
+        key == LogicalKeyboardKey.pageUp) {
+      if (isIframe) {
+        bloc.add(IframeNavigateEvent(false));
+      } else {
+        bloc.add(NavigateRelativeEvent(false));
+      }
+      return;
+    }
+
+    // ── Home: primul slide sau prima pagină iframe ─────────────────────────
+    if (key == LogicalKeyboardKey.home) {
+      if (isIframe) {
+        bloc.add(IframeResetPageEvent());
+      } else {
+        bloc.add(GoToFirstEvent());
+      }
+      return;
+    }
+
+    // ── Space: slide următor (întotdeauna) ────────────────────────────────
+    if (key == LogicalKeyboardKey.space) {
+      bloc.add(NavigateRelativeEvent(true));
+      return;
+    }
+
+    // ── Touch toggle ──────────────────────────────────────────────────────
+    if (key == LogicalKeyboardKey.keyT) {
+      bloc.add(ToggleTouchEvent());
+    }
+    // ── Overlay toggle ────────────────────────────────────────────────────
+    else if (key == LogicalKeyboardKey.keyO) {
+      bloc.add(ToggleOverlayEvent());
+    }
+    // ── Cronometru ────────────────────────────────────────────────────────
+    else if (key == LogicalKeyboardKey.keyP ||
+        key == LogicalKeyboardKey.enter) {
+      bloc.add(TimerToggleEvent());
+    } else if (key == LogicalKeyboardKey.keyR) {
+      bloc.add(TimerResetEvent());
+    }
+    // ── Salt rapid la ANUNȚ ───────────────────────────────────────────────
+    else if (key == LogicalKeyboardKey.keyA) {
+      _jumpToAnnounce(state, bloc);
+    }
+  }
+
+  void _jumpToAnnounce(PresentationState state, ControlBloc bloc) {
+    final idx = state.slides.indexWhere((s) => s.type == SlideType.announce);
+    if (idx >= 0) bloc.add(NavigateEvent(idx));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocBuilder<ControlBloc, PresentationState>(
+      builder: (context, state) {
+        final bloc = context.read<ControlBloc>();
+
+        return KeyboardListener(
+          focusNode: _focusNode,
+          onKeyEvent: (e) => _handleKey(e, bloc, state),
+          child: Scaffold(
+            backgroundColor: const Color(0xFF07070f),
+            appBar: _ControlAppBar(
+              state:       state,
+              bloc:        bloc,
+              pointerMode: _pointerMode,
+              onTogglePointer: () {
+                if (_pointerMode) bloc.add(ClearPointerEvent());
+                setState(() => _pointerMode = !_pointerMode);
+              },
+              onAnnounce: () => _jumpToAnnounce(state, bloc),
+            ),
+            body: Column(
+              children: [
+                Expanded(
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      // ── Zona principală (responsive: 3 coloane / panou unic) ──
+                      const _ResponsiveBody(),
+                      // ── Ecran Pointer Laser (overlay peste zona principală) ──
+                      if (_pointerMode)
+                        _PointerScreen(
+                          bloc:   bloc,
+                          onExit: () {
+                            bloc.add(ClearPointerEvent());
+                            setState(() => _pointerMode = false);
+                          },
+                        ),
+                    ],
+                  ),
+                ),
+                // ── Dock „Sunet”: fix, pliabil, mereu vizibil jos ──
+                // După orice gest în dock, focusul revine la pagină, ca
+                // scurtăturile de tastatură să continue să meargă.
+                Listener(
+                  onPointerUp: (_) => _focusNode.requestFocus(),
+                  child: FocusTraversalGroup(
+                    child: SoundDock(
+                      coordinator: _sound.coordinator,
+                      library:     _sound.library,
+                      engine:      _sound.engine,
+                      settings:    _sound.settings,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Zona principală — responsive, fără dimensiuni fixe
+//   ≥ 1000 px : 3 coloane proporționale (monitor · comenzi · listă slide-uri)
+//   < 1000 px : un singur panou, la alegere (tabletă / telefon), fiecare cu
+//               toată lățimea; panourile rămân montate (starea se păstrează)
+// ─────────────────────────────────────────────────────────────────────────────
+class _ResponsiveBody extends StatefulWidget {
+  const _ResponsiveBody();
+
+  @override
+  State<_ResponsiveBody> createState() => _ResponsiveBodyState();
+}
+
+class _ResponsiveBodyState extends State<_ResponsiveBody> {
+  int _pane = 1; // 0 monitor · 1 comenzi · 2 slide-uri
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, c) {
+        final w = c.maxWidth;
+        if (w >= 1000) {
+          final left  = (w * 0.24).clamp(260.0, 340.0).toDouble();
+          final right = (w * 0.17).clamp(180.0, 260.0).toDouble();
+          return Row(
+            children: [
+              // ── Stânga: Presenter View ──
+              SizedBox(width: left, child: const SlideMonitorPanel()),
+              // ── Centru: Comenzi ──
+              Expanded(child: _CenterPanel()),
+              // ── Dreapta: Listă slide-uri ──
+              SizedBox(width: right, child: const SlideListPanel()),
+            ],
+          );
+        }
+        final t = context.tk;
+        return Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+              child: SizedBox(
+                width: double.infinity,
+                child: SegmentedButton<int>(
+                  showSelectedIcon: false,
+                  style: SegmentedButton.styleFrom(
+                    minimumSize: const Size(0, 48),
+                    foregroundColor: t.textMid,
+                  ),
+                  segments: const [
+                    ButtonSegment(
+                        value: 0,
+                        icon: Icon(Icons.monitor_rounded),
+                        label: Text('Monitor')),
+                    ButtonSegment(
+                        value: 1,
+                        icon: Icon(Icons.tune_rounded),
+                        label: Text('Comenzi')),
+                    ButtonSegment(
+                        value: 2,
+                        icon: Icon(Icons.view_list_rounded),
+                        label: Text('Slide-uri')),
+                  ],
+                  selected: <int>{_pane},
+                  onSelectionChanged: (s) => setState(() => _pane = s.first),
+                ),
+              ),
+            ),
+            Expanded(
+              child: IndexedStack(
+                index: _pane,
+                children: [
+                  const SlideMonitorPanel(),
+                  _CenterPanel(),
+                  const SlideListPanel(),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AppBar
+// ─────────────────────────────────────────────────────────────────────────────
+class _ControlAppBar extends StatelessWidget implements PreferredSizeWidget {
+  final PresentationState state;
+  final ControlBloc       bloc;
+  final bool             pointerMode;
+  final VoidCallback     onTogglePointer;
+  final VoidCallback     onAnnounce;
+
+  const _ControlAppBar({
+    required this.state,
+    required this.bloc,
+    required this.pointerMode,
+    required this.onTogglePointer,
+    required this.onAnnounce,
+  });
+
+  @override
+  Size get preferredSize => const Size.fromHeight(56);
+
+  @override
+  Widget build(BuildContext context) {
+    final isIframe = state.slides.isNotEmpty &&
+        state.slides[state.currentSlide.clamp(0, state.slides.length - 1)]
+            .type ==
+            SlideType.iframe;
+
+    final hasAnnounce =
+    state.slides.any((s) => s.type == SlideType.announce);
+    final isOnAnnounce = state.slides.isNotEmpty &&
+        state.slides[state.currentSlide.clamp(0, state.slides.length - 1)]
+            .type ==
+            SlideType.announce;
+
+    const orange = Color(0xFFFF9800);
+
+    return AppBar(
+      backgroundColor: const Color(0xFF0b0b16),
+      elevation: 0,
+      titleSpacing: 0,
+      title: LayoutBuilder(builder: (context, constraints) {
+        // Pe ecrane înguste ascundem scurtăturile și bara devine derulabilă
+        // orizontal (fără overflow).
+        final wide = constraints.maxWidth >= 1100;
+        final items = <Widget>[
+            const Text(
+              'CONTROL',
+              style: TextStyle(
+                color:         Colors.white,
+                fontSize:      13,
+                fontWeight:    FontWeight.w800,
+                letterSpacing: 4,
+              ),
+            ),
+            const SizedBox(width: 16),
+            if (wide) ...[
+              _ShortcutBadge('← →', isIframe ? 'iframe' : 'slide'),
+              const SizedBox(width: 6),
+              _ShortcutBadge('T', 'touch'),
+              const SizedBox(width: 6),
+              _ShortcutBadge('O', 'overlay'),
+              const SizedBox(width: 6),
+              _ShortcutBadge('P', 'timer'),
+              const SizedBox(width: 6),
+              _ShortcutBadge('R', 'reset'),
+              if (isIframe) ...[
+                const SizedBox(width: 6),
+                _ShortcutBadge('⇧ ← →', 'iframe ↩'),
+              ],
+            ],
+            if (wide) const Spacer() else const SizedBox(width: 16),
+
+            // ── Buton ANUNȚ ───────────────────────────────────────────────
+            if (hasAnnounce) ...[
+              GestureDetector(
+                onTap: onAnnounce,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: isOnAnnounce
+                        ? orange.withOpacity(0.20)
+                        : Colors.white.withOpacity(0.04),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: isOnAnnounce
+                          ? orange.withOpacity(0.65)
+                          : Colors.white.withOpacity(0.10),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.campaign_outlined,
+                        size:  13,
+                        color: isOnAnnounce ? orange : Colors.white38,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'ANUNȚ',
+                        style: TextStyle(
+                          color: isOnAnnounce ? orange : Colors.white38,
+                          fontSize:      10,
+                          fontWeight:    FontWeight.w800,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+            ],
+
+            // ── Buton Pointer Laser ──────────────────────────────────────
+            GestureDetector(
+              onTap: onTogglePointer,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                decoration: BoxDecoration(
+                  color: pointerMode
+                      ? const Color(0xFFFF2244).withOpacity(0.2)
+                      : Colors.white.withOpacity(0.04),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: pointerMode
+                        ? const Color(0xFFFF2244).withOpacity(0.6)
+                        : Colors.white.withOpacity(0.08),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      pointerMode
+                          ? Icons.spatial_tracking
+                          : Icons.spatial_tracking_outlined,
+                      size:  14,
+                      color: pointerMode
+                          ? const Color(0xFFFF2244)
+                          : Colors.white38,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      pointerMode ? 'POINTER ON' : 'POINTER',
+                      style: TextStyle(
+                        color: pointerMode
+                            ? const Color(0xFFFF2244)
+                            : Colors.white38,
+                        fontSize:      10,
+                        fontWeight:    FontWeight.w800,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            if (isIframe) ...[
+              _IframePageBadge(
+                pageIndex: state.iframePageIndex,
+                onPrev: () => bloc.add(IframeNavigateEvent(false)),
+                onNext: () => bloc.add(IframeNavigateEvent(true)),
+              ),
+              const SizedBox(width: 10),
+            ],
+            // ── Chip cronometru (cerință #1: complet ascuns dacă !timerVisible) ──
+            if (state.timerVisible) ...[
+              GestureDetector(
+                onTap: () => bloc.add(TimerToggleEvent()),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: state.timerRunning
+                        ? const Color(0xFF6C63FF).withOpacity(0.15)
+                        : Colors.white.withOpacity(0.04),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: state.timerRunning
+                          ? const Color(0xFF6C63FF).withOpacity(0.5)
+                          : Colors.white.withOpacity(0.08),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (state.timerRunning) ...[
+                        _PulseDot(),
+                        const SizedBox(width: 8),
+                      ],
+                      Text(
+                        formatMs(state.timerTotalMs),
+                        style: TextStyle(
+                          color:         state.timerRunning
+                              ? Colors.white
+                              : Colors.white38,
+                          fontSize:      15,
+                          fontFamily:    'monospace',
+                          fontWeight:    FontWeight.w700,
+                          letterSpacing: 2,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+            ],
+            // ── Stare display / sincronizare / sunet display ──────────────
+            const SoundStatusPills(),
+            const SizedBox(width: 10),
+            // ── Setări (pagină separată) ──────────────────────────────────
+            AppIconButton(
+              icon: Icons.settings_rounded,
+              tooltip: 'Setări',
+              size: 44,
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => BlocProvider.value(
+                    value: bloc,
+                    child: const SettingsPage(),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            _StatusDot(label: 'Firebase', active: true),
+        ];
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: wide
+              ? Row(children: items)
+              : SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(children: items),
+                ),
+        );
+      }),
+      bottom: PreferredSize(
+        preferredSize: const Size.fromHeight(1),
+        child: Container(
+            height: 1, color: Colors.white.withOpacity(0.06)),
+      ),
+    );
+  }
+}
+
+class _IframePageBadge extends StatelessWidget {
+  final int          pageIndex;
+  final VoidCallback onPrev;
+  final VoidCallback onNext;
+
+  const _IframePageBadge({
+    required this.pageIndex,
+    required this.onPrev,
+    required this.onNext,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    const color = Color(0xFF00D9A3);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        GestureDetector(
+          onTap: pageIndex > 0 ? onPrev : null,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+            decoration: BoxDecoration(
+              color:        pageIndex > 0
+                  ? color.withOpacity(0.1)
+                  : Colors.transparent,
+              borderRadius: const BorderRadius.horizontal(
+                  left: Radius.circular(6)),
+              border: Border.all(
+                  color: color.withOpacity(pageIndex > 0 ? 0.4 : 0.15)),
+            ),
+            child: Icon(
+              Icons.chevron_left,
+              size:  14,
+              color: pageIndex > 0 ? color : color.withOpacity(0.25),
+            ),
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color:  color.withOpacity(0.1),
+            border: Border.symmetric(
+              horizontal: BorderSide(color: color.withOpacity(0.4)),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.web_outlined, size: 10, color: color),
+              const SizedBox(width: 5),
+              Text(
+                'Pag. ${pageIndex + 1}',
+                style: const TextStyle(
+                  color:      color,
+                  fontSize:   11,
+                  fontFamily: 'monospace',
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+        GestureDetector(
+          onTap: onNext,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+            decoration: BoxDecoration(
+              color:        color.withOpacity(0.1),
+              borderRadius: const BorderRadius.horizontal(
+                  right: Radius.circular(6)),
+              border: Border.all(color: color.withOpacity(0.4)),
+            ),
+            child: const Icon(Icons.chevron_right, size: 14, color: color),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ShortcutBadge extends StatelessWidget {
+  final String key_;
+  final String label;
+  const _ShortcutBadge(this.key_, this.label);
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+          decoration: BoxDecoration(
+            color:        Colors.white.withOpacity(0.06),
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: Colors.white.withOpacity(0.1)),
+          ),
+          child: Text(
+            key_,
+            style: const TextStyle(
+              color:      Colors.white54,
+              fontSize:   9,
+              fontFamily: 'monospace',
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        const SizedBox(width: 3),
+        Text(
+          label,
+          style: TextStyle(
+            color:         Colors.white.withOpacity(0.2),
+            fontSize:      9,
+            letterSpacing: 0.5,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _StatusDot extends StatelessWidget {
+  final String label;
+  final bool   active;
+  const _StatusDot({required this.label, required this.active});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 6, height: 6,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: active ? const Color(0xFF00D9A3) : Colors.redAccent,
+            boxShadow: active
+                ? [BoxShadow(
+                color:      const Color(0xFF00D9A3).withOpacity(0.5),
+                blurRadius: 6)]
+                : [],
+          ),
+        ),
+        const SizedBox(width: 5),
+        Text(
+          label,
+          style: TextStyle(
+              color: Colors.white.withOpacity(0.3), fontSize: 10),
+        ),
+      ],
+    );
+  }
+}
+
+class _PulseDot extends StatefulWidget {
+  @override
+  State<_PulseDot> createState() => _PulseDotState();
+}
+
+class _PulseDotState extends State<_PulseDot>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync:    this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (_, __) => Opacity(
+        opacity: 0.4 + 0.6 * _ctrl.value,
+        child: Container(
+          width: 6, height: 6,
+          decoration: const BoxDecoration(
+            shape: BoxShape.circle,
+            color: Color(0xFF6C63FF),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Panoul central — layout 2 coloane: Navigare | Comenzi
+// Nicio coloană nu are scroll propriu: totul se încadrează pe ecran.
+// ─────────────────────────────────────────────────────────────────────────────
+class _CenterPanel extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        border: Border(
+          left:  BorderSide(color: Colors.white.withOpacity(0.05)),
+          right: BorderSide(color: Colors.white.withOpacity(0.05)),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+
+          // ══ STÂNGA: Navigare ══════════════════════════════════════════════
+          Expanded(
+            flex: 55,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _SectionHeader(
+                    icon: Icons.navigation_outlined, label: 'NAVIGARE'),
+                const Expanded(child: NavigationPanel()),
+              ],
+            ),
+          ),
+
+          // Separator vertical
+          Container(width: 1, color: Colors.white.withOpacity(0.05)),
+
+          // ══ DREAPTA: Cronometre + Tablă ═══════════════════════════════════
+          Expanded(
+            flex: 45,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _SectionHeader(
+                    icon: Icons.timer_outlined, label: 'CRONOMETRE'),
+                const CompactTimerPanel(),
+                Container(height: 1, color: Colors.white.withOpacity(0.04)),
+                _SectionHeader(
+                    icon: Icons.touch_app_outlined,
+                    label: 'TABLĂ INTERACTIVĂ'),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(14, 8, 14, 14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TouchToggleWidget(),
+                      SizedBox(height: 8),
+                      OverlayToggleWidget(),
+                      SizedBox(height: 8),
+                      TimerVisibilityToggleWidget(),
+                      SizedBox(height: 8),
+                      VolumeControlWidget(),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SectionHeader extends StatelessWidget {
+  final IconData icon;
+  final String   label;
+  const _SectionHeader({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 11, color: Colors.white.withOpacity(0.2)),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              color:         Colors.white.withOpacity(0.2),
+              fontSize:      9,
+              fontWeight:    FontWeight.w800,
+              letterSpacing: 3,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Ecran Pointer Laser
+// ─────────────────────────────────────────────────────────────────────────────
+class _PointerScreen extends StatefulWidget {
+  final ControlBloc  bloc;
+  final VoidCallback onExit;
+
+  const _PointerScreen({required this.bloc, required this.onExit});
+
+  @override
+  State<_PointerScreen> createState() => _PointerScreenState();
+}
+
+class _PointerScreenState extends State<_PointerScreen> {
+  double?   _dotX, _dotY;
+  bool      _isDown = false;
+  DateTime? _lastSend;
+
+  static const _throttle = Duration(milliseconds: 30);
+
+  void _updatePointer(Offset local, BoxConstraints constraints) {
+    final nx = (local.dx / constraints.maxWidth).clamp(0.0, 1.0);
+    final ny = (local.dy / constraints.maxHeight).clamp(0.0, 1.0);
+    setState(() { _dotX = nx; _dotY = ny; });
+
+    final now = DateTime.now();
+    if (_lastSend == null || now.difference(_lastSend!) >= _throttle) {
+      _lastSend = now;
+      widget.bloc.add(SetPointerEvent(nx, ny));
+    }
+  }
+
+  void _releasePointer() {
+    setState(() => _isDown = false);
+    widget.bloc.add(ClearPointerEvent());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const purple = Color(0xFF6C63FF);
+    const red    = Color(0xFFFF2244);
+
+    return Container(
+      color: const Color(0xFF07070f),
+      child: Column(
+        children: [
+          // ── Header ────────────────────────────────────────────────────────
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            color:   Colors.black.withOpacity(0.4),
+            child: Row(
+              children: [
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width:  10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _isDown ? red : Colors.white24,
+                    boxShadow: _isDown
+                        ? [BoxShadow(color: red.withOpacity(0.7), blurRadius: 8)]
+                        : [],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  _isDown ? 'ACTIV — trimite pe Display' : 'LASER POINTER',
+                  style: TextStyle(
+                    color:      _isDown ? Colors.white : Colors.white54,
+                    fontSize:   13,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1,
+                  ),
+                ),
+                const Spacer(),
+                GestureDetector(
+                  onTap: widget.onExit,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 7),
+                    decoration: BoxDecoration(
+                      color:        Colors.white.withOpacity(0.06),
+                      borderRadius: BorderRadius.circular(8),
+                      border:       Border.all(color: Colors.white12),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.close, size: 13, color: Colors.white54),
+                        SizedBox(width: 6),
+                        Text(
+                          'IEȘI',
+                          style: TextStyle(
+                            color: Colors.white54, fontSize: 10,
+                            fontWeight: FontWeight.w800, letterSpacing: 1.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // ── Zona de click 16:9 ────────────────────────────────────────────
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.all(20),
+              child: Center(
+                child: AspectRatio(
+                  aspectRatio: 16 / 9,
+                  child: LayoutBuilder(
+                    builder: (ctx, constraints) {
+                      return Listener(
+                        onPointerDown: (e) {
+                          setState(() => _isDown = true);
+                          _updatePointer(e.localPosition, constraints);
+                        },
+                        onPointerMove: (e) {
+                          if (_isDown)
+                            _updatePointer(e.localPosition, constraints);
+                        },
+                        onPointerUp:     (_) => _releasePointer(),
+                        onPointerCancel: (_) => _releasePointer(),
+                        child: MouseRegion(
+                          cursor: SystemMouseCursors.precise,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.02),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(
+                                color: _isDown
+                                    ? red.withOpacity(0.6)
+                                    : purple.withOpacity(0.3),
+                                width: 1.5,
+                              ),
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(5),
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  CustomPaint(
+                                    painter: _GridPainter(),
+                                    child: const SizedBox.expand(),
+                                  ),
+                                  if (!_isDown)
+                                    Center(
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            Icons.touch_app_outlined,
+                                            color: purple.withOpacity(0.3),
+                                            size: 40,
+                                          ),
+                                          const SizedBox(height: 12),
+                                          Text(
+                                            'Apasă sau trage pentru a indica pe ecranul Display',
+                                            textAlign: TextAlign.center,
+                                            style: TextStyle(
+                                              color:    Colors.white
+                                                  .withOpacity(0.2),
+                                              fontSize: 13,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  if (_isDown &&
+                                      _dotX != null &&
+                                      _dotY != null)
+                                    Positioned(
+                                      left: _dotX! * constraints.maxWidth - 12,
+                                      top:  _dotY! * constraints.maxHeight - 12,
+                                      child: Container(
+                                        width:  24,
+                                        height: 24,
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: red.withOpacity(0.85),
+                                          border: Border.all(
+                                              color: Colors.white, width: 2),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color:      red.withOpacity(0.6),
+                                              blurRadius: 16,
+                                              spreadRadius: 2,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // ── Footer ────────────────────────────────────────────────────────
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+            color: Colors.black.withOpacity(0.3),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _HintChip(icon: Icons.mouse,
+                    text: 'Click și trage pentru mișcare continuă'),
+                const SizedBox(width: 24),
+                _HintChip(icon: Icons.touch_app,
+                    text: 'Funcționează și cu touch'),
+                const SizedBox(width: 24),
+                _HintChip(icon: Icons.visibility_off_outlined,
+                    text: 'Laser dispare la eliberare'),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HintChip extends StatelessWidget {
+  final IconData icon;
+  final String   text;
+  const _HintChip({required this.icon, required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 12, color: Colors.white24),
+        const SizedBox(width: 5),
+        Text(
+          text,
+          style: const TextStyle(color: Colors.white24, fontSize: 10),
+        ),
+      ],
+    );
+  }
+}
+
+class _GridPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color       = Colors.white.withOpacity(0.04)
+      ..strokeWidth = 1;
+
+    for (int i = 1; i < 4; i++) {
+      final x = size.width * i / 4;
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+    }
+    for (int i = 1; i < 3; i++) {
+      final y = size.height * i / 3;
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+    }
+    final centerPaint = Paint()
+      ..color       = Colors.white.withOpacity(0.08)
+      ..strokeWidth = 1;
+    canvas.drawLine(
+        Offset(size.width / 2, 0), Offset(size.width / 2, size.height),
+        centerPaint);
+    canvas.drawLine(
+        Offset(0, size.height / 2), Offset(size.width, size.height / 2),
+        centerPaint);
+  }
+
+  @override
+  bool shouldRepaint(_GridPainter _) => false;
+}
