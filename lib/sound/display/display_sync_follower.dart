@@ -203,7 +203,7 @@ class DisplaySyncFollower {
     final url = await resolveMediaUrl(item);
     if (epoch != _epoch || _disposed) return;
     if (url == null) {
-      lastError = 'Sunetul „${item.name}” nu are video în aplicație (assets) pentru display.';
+      lastError = 'Sunetul „${item.name}” nu are link video (Google Drive) pentru display.';
       return;
     }
 
@@ -213,7 +213,8 @@ class DisplaySyncFollower {
       await port.setVolume(0); // mut, indiferent de setare
       await port.seekTo(item.trimStartMs);
     } catch (e) {
-      lastError = 'Video indisponibil pe display: $e';
+      lastError = 'Video indisponibil pe display: $e (verifică linkul: fișierul din '
+          'Drive trebuie partajat „Oricine are linkul”)';
       await port.dispose();
       return;
     }

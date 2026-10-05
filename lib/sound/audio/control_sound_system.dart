@@ -14,7 +14,6 @@ import '../core/clock_sync.dart';
 import '../core/models.dart';
 import '../core/ports.dart';
 import '../core/sync_math.dart';
-import '../data/bundled_videos.dart';
 import '../data/hive_media_store.dart';
 import '../data/rtdb_sync_channel.dart';
 import '../data/settings_repository.dart';
@@ -37,7 +36,6 @@ class ControlSoundSystem {
     channel: channel,
     store: store,
     playerFactory: () => JustAudioPort(),
-    bundledVideos: BundledVideos(),
   );
   late final AudioEngine engine = AudioEngine(
     clock: mono,

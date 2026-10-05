@@ -2,14 +2,15 @@
 //
 // Biblioteca de sunete: metadatele sunt în baza de date, fișierele în magazia
 // locală persistentă (copiate la import, nu doar calea din selector). Pentru
-// sunetele video, imaginea de pe display vine din fișierul cu același nume aflat
-// ÎN aplicație (assets/sound_video/); aici se face doar legătura (`assetPath`).
+// sunetele video, imaginea de pe display NU vine din aplicație: vine din linkul
+// (Google Drive) scris în baza de date, în câmpul `videoUrl` al sunetului.
 
 import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 
+import '../../core/drive_link.dart';
 import '../core/models.dart';
 import '../core/playlist_logic.dart';
 import '../core/ports.dart';
@@ -52,7 +53,6 @@ class SoundLibrary {
 
   final SyncChannelPort channel;
   final MediaStorePort store;
-  final BundledVideosPort? bundledVideos;
   final AudioPlayerFactory playerFactory;
 
   final ValueNotifier<List<SoundItem>> items =
@@ -70,7 +70,6 @@ class SoundLibrary {
     required this.channel,
     required this.store,
     required this.playerFactory,
-    this.bundledVideos,
   });
 
   SoundItem? byId(String id) {
@@ -85,80 +84,7 @@ class SoundLibrary {
     _sub = channel.itemsStream().listen((list) {
       items.value = sortedItems(list);
       unawaited(_checkIntegrity());
-      unawaited(_autoRelink());
     });
-  }
-
-  // ── legătura cu video-urile din aplicație (assets) ────────────────────────
-  /// Lista fișierelor din aplicație, dacă implementarea o poate da.
-  BundledVideosCatalog? get _catalog {
-    final Object? b = bundledVideos;
-    return b is BundledVideosCatalog ? b : null;
-  }
-
-  bool _relinking = false;
-
-  /// Id-urile pentru care s-a încercat deja o salvare în sesiunea asta: dacă
-  /// baza de date nu păstrează legătura, nu intrăm într-o buclă de scrieri.
-  final Set<String> _relinkTried = <String>{};
-
-  Future<void> _autoRelink() async {
-    if (_relinking || _disposed) return;
-    _relinking = true;
-    try {
-      await relinkBundledVideos();
-    } catch (_) {
-      // se reîncearcă la următoarea schimbare a listei
-    } finally {
-      _relinking = false;
-    }
-  }
-
-  /// Leagă de aplicație video-urile rămase fără `assetPath` al căror fișier a apărut
-  /// între timp în assets/sound_video/ (build nou după import). Potrivire după
-  /// numele sunetului (cu sau fără extensie, fără diferență între majuscule și
-  /// minuscule). Întoarce câte video-uri au fost legate.
-  Future<int> relinkBundledVideos() async {
-    final cat = _catalog;
-    if (cat == null) return 0;
-    var linked = 0;
-    final waiting =
-        items.value.where((e) => e.isVideo && e.assetPath == null).toList();
-    for (final it in waiting) {
-      if (_disposed || _relinkTried.contains(it.id)) continue;
-      final asset = await cat.findByTitle(it.name);
-      if (asset == null) continue;
-      // starea de ACUM: sunetul poate fi șters sau editat cât timp am căutat
-      final fresh = byId(it.id);
-      if (fresh == null || fresh.assetPath != null) continue;
-      _relinkTried.add(it.id);
-      await save(fresh.copyWith(assetPath: asset));
-      linked++;
-    }
-    return linked;
-  }
-
-  /// Mesajul pentru un video care nu e (încă) în aplicație, cu ce vede aplicația
-  /// acum în assets/sound_video/ — ca să se vadă dacă problema e folderul / build-ul
-  /// (listă goală) sau numele fișierului (listă fără el).
-  Future<String> _notBundledMessage(String fileName) async {
-    const head = 'Video-ul nu e în aplicație: displayul nu va avea imaginea.';
-    List<String>? seen;
-    try {
-      seen = await _catalog?.names();
-    } catch (_) {/* fără diagnostic */}
-    if (seen == null) {
-      return '$head Pune „$fileName” în assets/sound_video/ și reconstruiește aplicația.';
-    }
-    if (seen.isEmpty) {
-      return '$head Aplicația nu vede niciun fișier în assets/sound_video/. Pune '
-          '„$fileName” acolo, verifică să fie declarat în pubspec.yaml și '
-          'reconstruiește aplicația (build nou, nu doar hot reload).';
-    }
-    final shown = seen.take(6).join(', ') + (seen.length > 6 ? ', …' : '');
-    return '$head Aplicația vede în assets/sound_video/: $shown. Numele trebuie să '
-        'fie identic cu „$fileName” (cu tot cu extensie). După ce îl pui acolo, '
-        'reconstruiește aplicația.';
   }
 
   /// La pornire și la schimbarea listei: fișier lipsă → marcaj (re-adăugare).
@@ -224,6 +150,7 @@ class SoundLibrary {
     List<PickedMedia> files, {
     SoundType? forceType,
     String? nameOverride,
+    String? videoLink,
   }) {
     final created = <ImportJob>[];
     for (final f in files) {
@@ -231,24 +158,37 @@ class SoundLibrary {
       created.add(job);
     }
     jobs.value = <ImportJob>[...jobs.value, ...created];
-    unawaited(_runImports(files, created, forceType, nameOverride));
+    unawaited(_runImports(files, created, forceType, nameOverride, videoLink));
     return created;
   }
 
   Future<void> _runImports(List<PickedMedia> files, List<ImportJob> js,
-      SoundType? forceType, String? nameOverride) async {
+      SoundType? forceType, String? nameOverride, String? videoLink) async {
     for (var i = 0; i < files.length; i++) {
       await _importOne(files[i], js[i], forceType,
-          files.length == 1 ? nameOverride : null);
+          files.length == 1 ? nameOverride : null,
+          files.length == 1 ? videoLink : null);
     }
   }
 
-  Future<void> _importOne(
-      PickedMedia f, ImportJob job, SoundType? forceType, String? name) async {
+  Future<void> _importOne(PickedMedia f, ImportJob job, SoundType? forceType,
+      String? name, String? videoLink) async {
     job.state.value = JobState.working;
     try {
       final err = validate(f);
       if (err != null) throw StateError(err);
+
+      final type = forceType ?? detectType(f)!;
+
+      // video: linkul (Google Drive) din care displayul își ia imaginea; se
+      // verifică ÎNAINTE de orice copiere locală
+      String? videoUrl;
+      if (type == SoundType.video) {
+        final link = (videoLink ?? '').trim();
+        final linkErr = DriveLink.validate(link);
+        if (linkErr != null) throw StateError(linkErr);
+        if (link.isNotEmpty) videoUrl = link;
+      }
 
       final free = await store.freeBytes();
       if (free != null && free < f.bytes.length * 1.3) {
@@ -256,7 +196,6 @@ class SoundLibrary {
             '(liber ≈ ${(free / (1024 * 1024)).floor()} MB).');
       }
 
-      final type = forceType ?? detectType(f)!;
       final mime = mimeFor(f, type);
       final id = '${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}'
           '${_jobSeq.toRadixString(36)}';
@@ -285,19 +224,13 @@ class SoundLibrary {
       }
       job.progress.value = 0.4;
 
-      // 3) video: legătura către fișierul din aplicație (assets), redat de display
+      // 3) video: displayul își ia imaginea din linkul Google Drive scris în baza
+      // de date (`videoUrl`), nu din aplicație
       final title = (name != null && name.trim().isNotEmpty) ? name.trim() : f.baseName;
-      String? assetPath;
-      if (type == SoundType.video) {
-        try {
-          // întâi numele exact al fișierului, apoi titlul sunetului (fără extensie)
-          assetPath =
-              await bundledVideos?.find(f.name) ?? await _catalog?.findByTitle(title);
-        } catch (_) {/* fără manifest de assets: tratat ca „nu e în aplicație” */}
-        if (assetPath == null) {
-          // fișierul rămâne local (sunetul funcționează); displayul nu va avea imaginea
-          job.error = await _notBundledMessage(f.name);
-        }
+      if (type == SoundType.video && videoUrl == null) {
+        // sunetul funcționează (audio local); displayul n-are imagine până se pune linkul
+        job.error = 'Video fără link: displayul nu va avea imaginea. Deschide '
+            '„Editează” la acest sunet și lipește linkul Google Drive.';
       }
       job.progress.value = 0.9;
 
@@ -309,7 +242,7 @@ class SoundLibrary {
         id: id,
         name: title,
         type: type,
-        assetPath: assetPath,
+        videoUrl: videoUrl,
         mime: mime,
         durationMs: duration,
         trimStartMs: 0,
@@ -333,11 +266,6 @@ class SoundLibrary {
     final err = validate(f);
     if (err != null) throw StateError(err);
     await store.put(id, f.bytes, mimeFor(f, it.type));
-    // video încă nelegat de aplicație: reîncearcă după numele fișierului ales
-    if (it.isVideo && it.assetPath == null) {
-      final asset = await bundledVideos?.find(f.name);
-      if (asset != null) await save(it.copyWith(assetPath: asset));
-    }
     await _checkIntegrity();
   }
 

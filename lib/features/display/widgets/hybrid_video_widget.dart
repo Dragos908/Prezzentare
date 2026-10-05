@@ -3,7 +3,10 @@
 // Redă un slide de tip video din DOUĂ surse posibile:
 //   • VideoSourceType.asset   → slide.localAssetPath  (fișier împachetat în
 //                               aplicație, ex: assets/videos/intro.mov)
-//   • VideoSourceType.network → slide.url             (link direct din Firebase)
+//   • VideoSourceType.network → slide.url             (link din Firebase: link direct
+//                               SAU link Google Drive, ex:
+//                               https://drive.google.com/file/d/ID/view — se
+//                               transformă singur în URL de redare, vezi DriveLink)
 //
 // ── FORMAT .mov ───────────────────────────────────────────────────────────────
 // Pe web, `video_player` folosește elementul HTML <video>, deci un fișier .mov
@@ -28,6 +31,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
+import '../../../core/drive_link.dart';
 import '../../../core/model.dart';
 import '../../../sound/display/display_audio_guard.dart';
 import '../../../sound/display/display_media_factory.dart';
@@ -155,7 +159,10 @@ class _HybridVideoWidgetState extends State<HybridVideoWidget> {
     }
     if (slide.videoSource == VideoSourceType.network &&
         (slide.url?.isNotEmpty ?? false)) {
-      return DisplayMediaFactory.instance.createNetwork(Uri.parse(slide.url!),
+      // link Google Drive (…/file/d/ID/view) → URL de descărcare directă;
+      // orice alt link rămâne neschimbat
+      return DisplayMediaFactory.instance.createNetwork(
+          Uri.parse(DriveLink.playableUrl(slide.url!)),
           label: 'slide-network');
     }
     return null;
@@ -345,10 +352,15 @@ class _VideoErrorView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final path = slide.videoPath;
-    final name = path.isEmpty ? '(fără fișier)' : path.split('/').last.split('?').first;
-    final hint = slide.isMovVideo
-        ? 'Un .mov trebuie să fie H.264 + AAC (yuv420p). Re-exportă fișierul.'
-        : 'Verifică fișierul / link-ul și formatul video.';
+    final isDrive = DriveLink.isDrive(path);
+    final name = path.isEmpty
+        ? '(fără fișier)'
+        : (isDrive ? 'Google Drive' : path.split('/').last.split('?').first);
+    final hint = isDrive
+        ? 'Verifică în Drive: fișierul trebuie partajat „Oricine are linkul”.'
+        : (slide.isMovVideo
+            ? 'Un .mov trebuie să fie H.264 + AAC (yuv420p). Re-exportă fișierul.'
+            : 'Verifică fișierul / link-ul și formatul video.');
     var reason = error.toString().replaceAll('\n', ' ');
     if (reason.length > 90) reason = '${reason.substring(0, 90)}…';
 

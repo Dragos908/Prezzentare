@@ -35,15 +35,10 @@ abstract class AudioPlayerPort {
 
 typedef AudioPlayerFactory = AudioPlayerPort Function();
 
-/// Prefix pentru o sursă video aflată în assets-urile aplicației
-/// (ex. `asset:assets/sound_video/intro.mp4`). Orice altceva e un URL redabil
-/// (ex. `blob:` din cache-ul local).
-const String kAssetSourcePrefix = 'asset:';
-
 /// Player video (display), ÎNTOTDEAUNA mut pentru conținutul sincronizat.
 abstract class VideoPlayerPort {
-  /// [url] = URL redabil (`blob:` din cache) sau `asset:<cale>` (vezi
-  /// [kAssetSourcePrefix]) pentru un video din aplicație.
+  /// [url] = URL direct redabil (link direct https sau linkul Google Drive deja
+  /// transformat de `DriveLink.playableUrl`). Video-ul nu e în aplicație.
   Future<void> initialize(String url);
   Future<void> play();
   Future<void> pause();
@@ -69,7 +64,7 @@ abstract class VideoPlayerPort {
 
 typedef VideoPortFactory = VideoPlayerPort Function();
 
-/// Stocare locală persistentă pentru fișiere media (control și display).
+/// Stocare locală persistentă pentru fișierele audio/video importate pe control.
 abstract class MediaStorePort {
   Future<void> init();
   Future<void> put(String key, Uint8List bytes, String mime);
@@ -83,28 +78,6 @@ abstract class MediaStorePort {
 
   /// Spațiul liber estimat (octeți) sau null dacă platforma nu îl poate spune.
   Future<double?> freeBytes();
-}
-
-/// Video-urile incluse ÎN aplicație (assets/sound_video/). Displayul le redă de
-/// acolo: fișierul face parte din build, deci nu se urcă nicăieri la rulare.
-abstract class BundledVideosPort {
-  /// Calea asset-ului (ex. `assets/sound_video/intro.mp4`) al fișierului cu
-  /// numele [fileName] (fără diferență între majuscule și minuscule) sau null
-  /// dacă fișierul nu există în aplicație.
-  Future<String?> find(String fileName);
-}
-
-/// Capacitate OPȚIONALĂ a unui [BundledVideosPort] (separată, ca implementările
-/// existente să rămână valide): ce fișiere vede aplicația în assets/sound_video/.
-/// O folosește biblioteca pentru mesaje de diagnostic și pentru re-legarea
-/// video-urilor al căror fișier a fost adăugat în assets DUPĂ import.
-abstract class BundledVideosCatalog {
-  /// Numele fișierelor (fără cale) din assets/sound_video/, în ordine alfabetică.
-  Future<List<String>> names();
-
-  /// Calea asset-ului al cărui nume (cu sau fără extensie, fără diferență între
-  /// majuscule și minuscule) este [title], sau null dacă nu există.
-  Future<String?> findByTitle(String title);
 }
 
 /// Ceasul de server văzut de follower/coordinator.

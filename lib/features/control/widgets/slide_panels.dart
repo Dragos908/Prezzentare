@@ -22,6 +22,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../../core/drive_link.dart';
 import '../../../core/model.dart';
 import '../bloc/control_bloc.dart';
 import '../bloc/control_event.dart';
@@ -1884,7 +1885,9 @@ class _VideoThumbnail extends StatelessWidget {
   Widget build(BuildContext context) {
     final loops = slide.loopsForever;
     final path  = slide.videoPath;
-    final name  = path.isEmpty ? 'video' : path.split('/').last.split('?').first;
+    final name  = path.isEmpty
+        ? 'video'
+        : (DriveLink.isDrive(path) ? 'Google Drive' : path.split('/').last.split('?').first);
 
     return Stack(
       fit: StackFit.expand,

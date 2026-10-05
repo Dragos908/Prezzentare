@@ -42,6 +42,15 @@ bool _bool(Object? v, bool fallback) => v is bool ? v : fallback;
 String? _strOrNull(Object? v) =>
     (v is String && v.trim().isNotEmpty) ? v : null;
 
+/// Date vechi: un link direct putea sta în `assetPath`. O cale din assets
+/// (`assets/sound_video/...`) NU mai e folosită: video-urile nu mai sunt în aplicație.
+String? _legacyLink(Object? v) {
+  final s = _strOrNull(v);
+  if (s == null) return null;
+  final t = s.trim().toLowerCase();
+  return (t.startsWith('http://') || t.startsWith('https://')) ? s.trim() : null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SoundItem (sound_items)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -50,10 +59,12 @@ class SoundItem {
   final String name;
   final SoundType type;
 
-  /// Doar pentru video: calea fișierului din assets-urile aplicației
-  /// (ex. `assets/sound_video/intro.mp4`), redat de display. null = displayul nu
-  /// are imagine pentru acest sunet (fișierul nu e inclus în aplicație).
-  final String? assetPath;
+  /// Doar pentru video: linkul fișierului video, scris în baza de date și redat de
+  /// display. De regulă un link Google Drive, așa cum e copiat din Drive
+  /// (ex. `https://drive.google.com/file/d/ID/view`); un link direct https către un
+  /// fișier video merge la fel. null = displayul nu are imagine pentru acest sunet
+  /// (nu s-a pus încă un link). Transformarea în URL redabil: `DriveLink.playableUrl`.
+  final String? videoUrl;
   final String mime;
 
   final int durationMs;
@@ -83,7 +94,7 @@ class SoundItem {
     required this.id,
     required this.name,
     required this.type,
-    this.assetPath,
+    this.videoUrl,
     this.mime = '',
     this.durationMs = 0,
     this.trimStartMs = 0,
@@ -119,7 +130,7 @@ class SoundItem {
   SoundItem copyWith({
     String? name,
     SoundType? type,
-    Object? assetPath = _keep,
+    Object? videoUrl = _keep,
     String? mime,
     int? durationMs,
     int? trimStartMs,
@@ -137,7 +148,7 @@ class SoundItem {
       id: id,
       name: name ?? this.name,
       type: type ?? this.type,
-      assetPath: identical(assetPath, _keep) ? this.assetPath : assetPath as String?,
+      videoUrl: identical(videoUrl, _keep) ? this.videoUrl : videoUrl as String?,
       mime: mime ?? this.mime,
       durationMs: durationMs ?? this.durationMs,
       trimStartMs: trimStartMs ?? this.trimStartMs,
@@ -162,7 +173,7 @@ class SoundItem {
           ? (j['name'] as String).trim()
           : 'Sunet',
       type: enumByName(SoundType.values, j['type'], SoundType.audio),
-      assetPath: _strOrNull(j['assetPath']),
+      videoUrl: _strOrNull(j['videoUrl']) ?? _legacyLink(j['assetPath']),
       mime: (j['mime'] as String?) ?? '',
       durationMs: _int(j['durationMs'], 0),
       trimStartMs: _int(j['trimStartMs'], 0),
@@ -182,7 +193,7 @@ class SoundItem {
   Map<String, Object?> toJson() => <String, Object?>{
         'name': name,
         'type': type.name,
-        if (assetPath != null) 'assetPath': assetPath,
+        if (videoUrl != null) 'videoUrl': videoUrl,
         'mime': mime,
         'durationMs': durationMs,
         'trimStartMs': trimStartMs,

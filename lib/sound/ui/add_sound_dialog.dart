@@ -9,20 +9,35 @@ import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
+import '../../core/drive_link.dart';
 import '../../core/theme/app_tokens.dart';
 import '../core/models.dart';
 import '../data/sound_library.dart';
+import 'video_link_field.dart';
 
 class _Draft {
   final PickedMedia media;
   SoundType type;
   final TextEditingController name;
+
+  /// Linkul Google Drive al video-ului (doar pentru tipul video; opțional).
+  final TextEditingController link = TextEditingController();
   final String? error;
 
   _Draft(this.media)
       : type = SoundLibrary.detectType(media) ?? SoundType.audio,
         name = TextEditingController(text: media.baseName),
         error = SoundLibrary.validate(media);
+
+  /// Linkul e valid (sau gol / nefolosit, dacă sunetul nu e video).
+  bool get linkOk => type != SoundType.video || DriveLink.validate(link.text) == null;
+
+  bool get canImport => error == null && linkOk;
+
+  void dispose() {
+    name.dispose();
+    link.dispose();
+  }
 }
 
 Future<void> showAddSoundDialog(BuildContext context, SoundLibrary library,
@@ -57,7 +72,7 @@ class _AddSoundDialogState extends State<_AddSoundDialog> {
   @override
   void dispose() {
     for (final d in _drafts) {
-      d.name.dispose();
+      d.dispose();
     }
     super.dispose();
   }
@@ -102,11 +117,12 @@ class _AddSoundDialogState extends State<_AddSoundDialog> {
   }
 
   void _import() {
-    for (final d in _drafts.where((d) => d.error == null)) {
+    for (final d in _drafts.where((d) => d.canImport)) {
       widget.library.importFiles(
         <PickedMedia>[d.media],
         forceType: d.type,
         nameOverride: d.name.text,
+        videoLink: d.type == SoundType.video ? d.link.text : null,
       );
     }
     Navigator.of(context).pop();
@@ -115,7 +131,7 @@ class _AddSoundDialogState extends State<_AddSoundDialog> {
   @override
   Widget build(BuildContext context) {
     final t = context.tk;
-    final valid = _drafts.where((d) => d.error == null).length;
+    final valid = _drafts.where((d) => d.canImport).length;
 
     Widget zone = AnimatedContainer(
       duration: const Duration(milliseconds: 120),
@@ -135,8 +151,8 @@ class _AddSoundDialogState extends State<_AddSoundDialog> {
               style: t.caption, textAlign: TextAlign.center),
           const SizedBox(height: 4),
           Text(
-              'Imaginea unui video pe display vine din aplicație: fișierul trebuie să '
-              'existe și în assets/sound_video/, cu același nume.',
+              'Video: imaginea de pe display vine din Google Drive. Urcă fișierul și în '
+              'Drive (partajat „Oricine are linkul”) și lipește linkul sub fișier.',
               style: t.caption, textAlign: TextAlign.center),
           const SizedBox(height: 12),
           FilledButton.icon(
@@ -196,8 +212,9 @@ class _AddSoundDialogState extends State<_AddSoundDialog> {
                         itemBuilder: (context, i) => _DraftTile(
                           draft: _drafts[i],
                           onType: (v) => setState(() => _drafts[i].type = v),
+                          onLinkChanged: () => setState(() {}),
                           onRemove: () => setState(() {
-                            _drafts[i].name.dispose();
+                            _drafts[i].dispose();
                             _drafts.removeAt(i);
                           }),
                         ),
@@ -230,8 +247,14 @@ class _AddSoundDialogState extends State<_AddSoundDialog> {
 class _DraftTile extends StatelessWidget {
   final _Draft draft;
   final ValueChanged<SoundType> onType;
+  final VoidCallback onLinkChanged;
   final VoidCallback onRemove;
-  const _DraftTile({required this.draft, required this.onType, required this.onRemove});
+  const _DraftTile({
+    required this.draft,
+    required this.onType,
+    required this.onLinkChanged,
+    required this.onRemove,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -282,6 +305,10 @@ class _DraftTile extends StatelessWidget {
           const SizedBox(height: 4),
           Text(draft.error ?? '${draft.media.name} · $mb MB',
               style: draft.error == null ? t.caption : TextStyle(color: t.danger, fontSize: 12)),
+          if (draft.error == null && draft.type == SoundType.video) ...[
+            const SizedBox(height: 10),
+            VideoLinkField(controller: draft.link, onChanged: onLinkChanged),
+          ],
         ],
       ),
     );

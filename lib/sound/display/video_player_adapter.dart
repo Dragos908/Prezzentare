@@ -24,11 +24,9 @@ class FlutterVideoPort implements VideoPlayerPort {
 
   @override
   Future<void> initialize(String url) async {
-    // `asset:<cale>` = video din aplicație; altfel URL (ex. blob: din cache)
-    final c = url.startsWith(kAssetSourcePrefix)
-        ? mediaFactory.createAsset(url.substring(kAssetSourcePrefix.length),
-            label: 'sync-overlay')
-        : mediaFactory.createNetwork(Uri.parse(url), label: 'sync-overlay');
+    // URL direct de redare: linkul din baza de date (Google Drive sau link direct),
+    // deja transformat de DriveLink.playableUrl. Video-ul nu e în aplicație.
+    final c = mediaFactory.createNetwork(Uri.parse(url), label: 'sync-overlay');
     _c = c;
     try {
       await c.initialize();

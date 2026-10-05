@@ -4,7 +4,8 @@
 // bază de date și același proiect ca restul aplicației. Noduri noi (nu
 // modifică nimic existent):
 //   <proiect>/settings             setările (displayAudioMuted, avSyncOffsetMs…)
-//   <proiect>/sound/items/<id>     biblioteca de sunete (metadate)
+//   <proiect>/sound/items/<id>     biblioteca de sunete (metadate; la video, `videoUrl`
+//                                  = linkul Google Drive din care displayul redă imaginea)
 //   <proiect>/sound/playback       starea de redare (scris la evenimente)
 //   <proiect>/sound/heartbeat      poziția reală a audio, ~1/s
 //   <proiect>/sound/displayStatus  starea displayului, ~1/s

@@ -130,8 +130,8 @@ class ManageSoundsDialog extends StatelessWidget {
                         itemBuilder: (context, i) {
                           final it = items[i];
                           final missing = health[it.id] == MediaHealth.missing;
-                          // video nelegat de aplicație: displayul nu are imagine
-                          final noPicture = it.isVideo && it.assetPath == null;
+                          // video fără link Google Drive: displayul nu are imagine
+                          final noPicture = it.isVideo && it.videoUrl == null;
                           return ListTile(
                             key: ValueKey<String>(it.id),
                             contentPadding: EdgeInsets.zero,
@@ -146,8 +146,8 @@ class ManageSoundsDialog extends StatelessWidget {
                             subtitle: Text(
                               '${it.isVideo ? 'Video' : 'Audio'} · ${formatClock(it.durationMs)}'
                               '${missing ? ' · fișier lipsă' : ''}'
-                              '${noPicture ? ' · fără imagine pe display: fișierul nu e în aplicație '
-                                  '(pune-l în assets/sound_video/ cu același nume ca sunetul și reconstruiește)' : ''}',
+                              '${noPicture ? ' · fără imagine pe display: lipsește linkul Google Drive '
+                                  '(apasă „Editează” și lipește-l)' : ''}',
                               style: TextStyle(
                                   color: (missing || noPicture) ? t.warning : t.textLo),
                             ),
@@ -174,8 +174,8 @@ class ManageSoundsDialog extends StatelessWidget {
                                 icon: Icon(Icons.delete_outline_rounded, color: t.danger),
                                 onPressed: () async {
                                   final ok = await _confirm(context, 'Ștergi „${it.name}”?',
-                                      'Fișierul local va fi șters din browser. Video-ul din '
-                                      'aplicație (assets) nu este afectat.');
+                                      'Fișierul local va fi șters din browser, iar sunetul din '
+                                      'listă. Video-ul din Google Drive nu este afectat.');
                                   if (!ok) return;
                                   await engine.stop(it.id, fadeMs: 0);
                                   engine.forget(it.id);

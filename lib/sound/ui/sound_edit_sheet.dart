@@ -7,10 +7,12 @@
 
 import 'package:flutter/material.dart';
 
+import '../../core/drive_link.dart';
 import '../../core/theme/app_tokens.dart';
 import '../audio/audio_engine.dart';
 import '../core/models.dart';
 import '../data/sound_library.dart';
+import 'video_link_field.dart';
 
 // Fade-out / fade la nivel: null = valoarea implicită din Setări.
 const List<int?> _fadeChoices = <int?>[null, 500, 1000, 3000, 5000, 10000, 15000, 30000];
@@ -56,13 +58,10 @@ class _EditDialogState extends State<_EditDialog> {
   late int? _fadeTo = widget.item.fadeToLevelMs;
   late int _color = widget.item.color;
 
-  static bool _isLink(String? p) =>
-      p != null && (p.startsWith('http://') || p.startsWith('https://'));
-
-  /// Link direct către video, folosit de display (doar pentru sunete video).
-  late final TextEditingController _link = TextEditingController(
-      text: _isLink(widget.item.assetPath) ? widget.item.assetPath : '');
-  String? _linkError;
+  /// Linkul video (Google Drive) din care displayul redă imaginea; doar pentru
+  /// sunete video.
+  late final TextEditingController _link =
+      TextEditingController(text: widget.item.videoUrl ?? '');
 
   int get _duration => widget.item.durationMs;
 
@@ -88,20 +87,13 @@ class _EditDialogState extends State<_EditDialog> {
     final name = _name.text.trim().isEmpty ? widget.item.name : _name.text.trim();
     final trimEnd = _end >= _duration ? null : _end; // null = până la sfârșit
 
-    // Link video pentru display: completat = îl folosește; golit (dacă era link)
-    // = displayul rămâne fără imagine; altfel calea din assets rămâne neschimbată.
-    String? asset = widget.item.assetPath;
+    // Link video pentru display (Google Drive): completat = displayul îl redă de
+    // acolo; golit = displayul rămâne fără imagine. Se scrie în baza de date.
+    String? videoUrl = widget.item.videoUrl;
     if (widget.item.isVideo) {
       final link = _link.text.trim();
-      if (link.isNotEmpty && !_isLink(link)) {
-        setState(() => _linkError = 'Linkul trebuie să înceapă cu https://');
-        return;
-      }
-      if (link.isNotEmpty) {
-        asset = link;
-      } else if (_isLink(asset)) {
-        asset = null;
-      }
+      if (DriveLink.validate(link) != null) return; // eroarea se vede sub câmp
+      videoUrl = link.isEmpty ? null : link;
     }
 
     final updated = widget.item.copyWith(
@@ -115,7 +107,7 @@ class _EditDialogState extends State<_EditDialog> {
       fadeOutMs: _fadeOut,
       fadeToLevelMs: _fadeTo,
       color: _color,
-      assetPath: asset,
+      videoUrl: videoUrl,
     );
     await widget.library.save(updated);
     widget.engine.updateItem(updated);
@@ -180,22 +172,7 @@ class _EditDialogState extends State<_EditDialog> {
                 ),
                 if (widget.item.isVideo) ...[
                   const SizedBox(height: 12),
-                  TextField(
-                    controller: _link,
-                    keyboardType: TextInputType.url,
-                    onChanged: (_) {
-                      if (_linkError != null) setState(() => _linkError = null);
-                    },
-                    decoration: InputDecoration(
-                      labelText: 'Link video pentru display (opțional)',
-                      hintText: 'https://…/IMG_8677.mp4',
-                      helperText: 'Link direct către fișierul video. Displayul îl redă '
-                          'de acolo, în loc de assets/sound_video/.',
-                      helperMaxLines: 2,
-                      errorText: _linkError,
-                      border: const OutlineInputBorder(),
-                    ),
-                  ),
+                  VideoLinkField(controller: _link),
                 ],
                 const SizedBox(height: 18),
 
